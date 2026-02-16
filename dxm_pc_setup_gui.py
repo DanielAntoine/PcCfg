@@ -39,6 +39,7 @@ class InstallApp:
     key: str
     label: str
     winget_id: str
+    category: str
 
 
 def run_command(command: str) -> tuple[int, str]:
@@ -155,8 +156,13 @@ def format_status_line(label: str, value: str, ok: bool) -> str:
     return f"{label:<28}: {value} [{status_tag(ok)}]"
 
 
-def readable_timeout(minutes: int) -> str:
-    return "Disabled" if minutes == 0 else f"{minutes} min"
+def readable_timeout_seconds(seconds: int) -> str:
+    """Format powercfg timeout values (reported in seconds) for display."""
+    if seconds == 0:
+        return "Disabled"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} min"
+    return f"{seconds} sec"
 
 
 
@@ -270,7 +276,15 @@ class MainWindow(QtWidgets.QWidget):
 
         self.apps_group = QtWidgets.QGroupBox("Applications (winget)")
         self.apps_layout = QtWidgets.QVBoxLayout(self.apps_group)
+        current_category: str | None = None
         for app in self.install_apps:
+            if app.category != current_category:
+                current_category = app.category
+                category_label = QtWidgets.QLabel(current_category)
+                font = category_label.font()
+                font.setBold(True)
+                category_label.setFont(font)
+                self.apps_layout.addWidget(category_label)
             cb = QtWidgets.QCheckBox(app.label)
             cb.setChecked(False)
             self.app_checkboxes[app.key] = cb
@@ -408,14 +422,28 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_install_apps(self) -> list[InstallApp]:
         return [
+
             InstallApp("chrome", "Google Chrome", "Google.Chrome"),
-            InstallApp("vlc", "VLC media player", "VideoLAN.VLC"),
-            InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake"),
-            InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++"),
-            InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio"),
-            InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg"),
-            InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI"),
-            InstallApp("blender", "Blender", "BlenderFoundation.Blender"),
+            InstallApp("davinci_resolve", "DaVinci Resolve", "BlackmagicDesign.DaVinciResolve", "Core video editing / post"),
+            InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post"),
+            InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post"),
+            InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake", "Core video editing / post"),
+            InstallApp("avidemux", "Avidemux", "Avidemux.Avidemux", "Core video editing / post"),
+            InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio", "Capture / streaming / recording"),
+            InstallApp("sharex", "ShareX", "ShareX.ShareX", "Capture / streaming / recording"),
+            InstallApp("audacity", "Audacity", "Audacity.Audacity", "Audio for video"),
+            InstallApp("reaper", "REAPER", "Cockos.REAPER", "Audio for video"),
+            InstallApp("vlc", "VLC media player", "VideoLAN.VLC", "Codecs / media tools"),
+            InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg", "Codecs / media tools"),
+            InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI", "Codecs / media tools"),
+            InstallApp("mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix", "Codecs / media tools"),
+            InstallApp("blender", "Blender", "BlenderFoundation.Blender", "Motion graphics / VFX / 3D"),
+            InstallApp("natron", "Natron", "Natron.Natron", "Motion graphics / VFX / 3D"),
+            InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++", "Utilities for creators"),
+            InstallApp("seven_zip", "7-Zip", "7zip.7zip", "Utilities for creators"),
+            InstallApp("everything", "Everything", "voidtools.Everything", "Utilities for creators"),
+            InstallApp("crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo", "Utilities for creators"),
+            InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
         ]
 
     def _append(self, text: str = "") -> None:
@@ -564,7 +592,7 @@ class MainWindow(QtWidgets.QWidget):
                 "STANDBYIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -574,7 +602,7 @@ class MainWindow(QtWidgets.QWidget):
                 "HIBERNATEIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -584,7 +612,7 @@ class MainWindow(QtWidgets.QWidget):
                 "DISKIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -592,9 +620,9 @@ class MainWindow(QtWidgets.QWidget):
                 "Monitor timeout",
                 "SUB_VIDEO",
                 "VIDEOIDLE",
-                expected_ac=30,
-                expected_dc=30,
-                value_formatter=readable_timeout,
+                expected_ac=1800,
+                expected_dc=1800,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
