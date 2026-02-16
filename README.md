@@ -97,4 +97,7 @@ Install-Package <name> -Force -Confirm:$false
 - [ ] Constrain long checklist text to wrap to a maximum of 2 lines; use the second line only when needed so single-line content does not reserve extra blank row height.
 - [ ] Replace plain checklist status text with status chips (`PASS`, `FAIL`, `PENDING`, `RUNNING`) and apply consistent color semantics per status across the UI.
 - [ ] Generate the hostname automatically using `{ClientNamePascal}-{Role2LUpper}-{numbering00}` and remove manual computer-name input.
-- [ ] Make Inspect display live detection results for available checks (for example, Wi-Fi connectivity), and auto-check checklist items only when a check passes.
+- [ ] Detect whether a Wi-Fi adapter is present during Inspect, and update the matching checklist item automatically when detection passes.
+- [ ] Detect whether Wi-Fi is connected during Inspect (connected/disconnected + SSID/signal when available), and update the matching checklist item automatically when detection passes.
+- [ ] Detect internet reachability during Inspect (for example via DNS/ping test), and update the matching checklist item automatically when detection passes.
+- [ ] For each Inspect detection result, sync checklist state so passing checks can auto-check their mapped checklist tasks while failed/unknown checks remain visible for manual follow-up.
