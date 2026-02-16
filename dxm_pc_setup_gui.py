@@ -239,6 +239,30 @@ def readable_timeout_seconds(seconds: int) -> str:
     return f"{seconds} sec"
 
 
+def query_password_required_status(cancel_requested: Callable[[], bool] | None = None) -> bool | None:
+    """Return whether the current Windows user requires a password."""
+    username = os.environ.get("USERNAME", "").strip()
+    if not username:
+        return None
+
+    _, output = run_command_with_options(
+        ["net", "user", username],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line.lower().startswith("password required"):
+            continue
+        if re.search(r"\byes\b", line, flags=re.IGNORECASE):
+            return True
+        if re.search(r"\bno\b", line, flags=re.IGNORECASE):
+            return False
+
+    return None
+
+
 
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     """Parse JSON produced by PowerShell's ConvertTo-Json output."""
@@ -503,6 +527,18 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
                 "Notification Center",
                 "Disabled" if notification_center == 1 else "Enabled",
                 notification_center == 1,
+            )
+        )
+
+    password_required = query_password_required_status(cancel_requested)
+    if password_required is None:
+        lines.append(format_status_line("Windows password", "Unable to query", False))
+    else:
+        lines.append(
+            format_status_line(
+                "Windows password",
+                "Protected" if password_required else "Not protected",
+                password_required,
             )
         )
 
@@ -967,8 +1003,6 @@ class MainWindow(QtWidgets.QWidget):
         self._worker.moveToThread(self._worker_thread)
 
         worker.log_line.connect(self._append)
-        worker.step_started.connect(lambda name: self._append(f"[STEP START] {name}"))
-        worker.step_finished.connect(lambda name, ok: self._append(f"[STEP END] {name} -> {'OK' if ok else 'FAIL'}"))
         worker.completed.connect(self._on_worker_completed)
 
         self._worker_thread.started.connect(worker.run)
