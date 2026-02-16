@@ -9,6 +9,7 @@ PyQt-based Windows setup utility inspired by the provided batch script.
 from __future__ import annotations
 
 import ctypes
+import json
 import os
 import platform
 import re
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from PyQt5 import QtCore, QtWidgets
 
@@ -132,6 +135,66 @@ def parse_registry_int(raw_value: str | None) -> int | None:
 
 def status_tag(is_ok: bool) -> str:
     return "Ok" if is_ok else "Not Ok"
+
+
+def fetch_url_text(url: str, timeout: int = 8) -> str:
+    """Best-effort helper to fetch UTF-8 text from a URL."""
+    req = Request(url, headers={"User-Agent": "DXM-PC-Setup/1.0"})
+    with urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="ignore")
+
+
+def get_latest_windows_11_build_from_web() -> str:
+    """Get latest public Windows 11 build from Microsoft's release health page."""
+    url = "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information"
+    try:
+        html = fetch_url_text(url)
+    except (URLError, TimeoutError, OSError):
+        return "Unable to query"
+
+    matches = re.findall(r"OS Build\s+([0-9]{5}\.[0-9]+)", html, flags=re.IGNORECASE)
+    if not matches:
+        return "Unable to parse"
+
+    latest = max(matches, key=lambda v: tuple(int(p) for p in v.split(".")))
+    return latest
+
+
+def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
+    """Parse JSON produced by PowerShell's ConvertTo-Json output."""
+    text = raw_output.strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(data, dict):
+        return [data]
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
+def guess_gpu_vendor(name: str) -> str:
+    value = name.lower()
+    if "nvidia" in value or "geforce" in value or "quadro" in value:
+        return "NVIDIA"
+    if "amd" in value or "radeon" in value:
+        return "AMD"
+    if "intel" in value:
+        return "Intel"
+    return "Unknown"
+
+
+def get_vendor_driver_lookup_hint(vendor: str) -> str:
+    links = {
+        "NVIDIA": "https://www.nvidia.com/Download/index.aspx",
+        "AMD": "https://www.amd.com/en/support/download/drivers.html",
+        "Intel": "https://www.intel.com/content/www/us/en/support/detect.html",
+    }
+    return links.get(vendor, "Vendor support page")
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -300,15 +363,74 @@ class MainWindow(QtWidgets.QWidget):
         code, os_name = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"")
         _, os_ver = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Version\"")
         _, os_build = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).BuildNumber\"")
+        _, os_ubr = run_command("reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v UBR")
+        _, os_display = run_command("reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v DisplayVersion")
         if code == 0:
             self._append("System")
             self._append("-" * 60)
             self._append(f"OS        : {compact_single_line(os_name)}")
             self._append(f"Version   : {compact_single_line(os_ver)}")
             self._append(f"Build     : {compact_single_line(os_build)}")
+            ubr_value = parse_registry_int(parse_registry_value(os_ubr))
+            display_value = parse_registry_value(os_display)
+            if display_value:
+                self._append(f"Release   : {display_value}")
+            if ubr_value is not None:
+                self._append(f"Full build: {compact_single_line(os_build)}.{ubr_value}")
+            self._append(f"Latest Win11 build (web): {get_latest_windows_11_build_from_web()}")
         else:
             self._append("OS        : unable to query")
         self._append(f"Admin     : {'YES' if is_admin() else 'NO'}")
+        self._append()
+
+        self._append("Video adapters")
+        self._append("-" * 60)
+        gpu_cmd = (
+            "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | "
+            "Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress\""
+        )
+        _, gpu_out = run_command(gpu_cmd)
+        gpus = parse_json_payload(gpu_out)
+        if gpus:
+            for gpu in gpus:
+                name = str(gpu.get("Name", "Unknown")).strip() or "Unknown"
+                version = str(gpu.get("DriverVersion", "Unknown")).strip() or "Unknown"
+                date = str(gpu.get("DriverDate", "")).strip()
+                vendor = guess_gpu_vendor(name)
+                lookup = get_vendor_driver_lookup_hint(vendor)
+                self._append(f"GPU       : {name}")
+                self._append(f"  Driver  : {version}")
+                if date:
+                    self._append(f"  Date    : {date}")
+                self._append(f"  Latest  : check {vendor} site -> {lookup}")
+        else:
+            self._append("GPU       : Unable to query")
+        self._append()
+
+        self._append("PCI hardware (network/storage/display, etc.)")
+        self._append("-" * 60)
+        pci_cmd = (
+            "powershell -NoProfile -Command \"Get-CimInstance Win32_PnPSignedDriver | "
+            "Where-Object { $_.DeviceID -like 'PCI*' } | "
+            "Select-Object DeviceName,DriverVersion,DriverProviderName,DeviceClass | "
+            "Sort-Object DeviceClass,DeviceName | ConvertTo-Json -Compress\""
+        )
+        _, pci_out = run_command(pci_cmd)
+        pci_devices = parse_json_payload(pci_out)
+        if pci_devices:
+            self._append(f"Found     : {len(pci_devices)} PCI devices")
+            for dev in pci_devices[:40]:
+                dev_name = str(dev.get("DeviceName", "Unknown")).strip() or "Unknown"
+                dev_ver = str(dev.get("DriverVersion", "Unknown")).strip() or "Unknown"
+                dev_class = str(dev.get("DeviceClass", "Unknown")).strip() or "Unknown"
+                provider = str(dev.get("DriverProviderName", "Unknown")).strip() or "Unknown"
+                self._append(f"- {dev_class}: {dev_name}")
+                self._append(f"  Driver  : {dev_ver} ({provider})")
+            if len(pci_devices) > 40:
+                self._append(f"... truncated list ({len(pci_devices) - 40} more devices not shown)")
+            self._append("Latest web driver check for all PCI devices is vendor/model specific and must be validated per device.")
+        else:
+            self._append("PCI       : Unable to query")
         self._append()
 
         self._append("Configuration checks")
