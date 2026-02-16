@@ -299,6 +299,11 @@ def format_driver_date(raw_date: str) -> str:
     return value
 
 
+def format_memory_gib(capacity_bytes: int) -> str:
+    """Format bytes as GiB with one decimal place."""
+    return f"{capacity_bytes / (1024 ** 3):.1f} GiB"
+
+
 def is_target_video_device(name: str, pnp_device_id: str) -> bool:
     """Keep only physical target vendors requested by the workflow."""
     text = f"{name} {pnp_device_id}".lower()
@@ -604,6 +609,61 @@ class SetupWorker(QtCore.QObject):
         self.log_line.emit(format_kv_line("Admin", 'YES' if is_admin() else 'NO'))
         self.step_finished.emit("System", code == 0)
         self.log_line.emit("")
+
+        if self._cancelled():
+            self.completed.emit(False, "cancelled")
+            return
+
+        self.step_started.emit("Memory")
+        self.log_line.emit("Memory")
+        self.log_line.emit("-" * 60)
+        memory_cmd = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_PhysicalMemory | Select-Object Manufacturer,PartNumber,Capacity,ConfiguredClockSpeed,Speed | ConvertTo-Json -Compress",
+        ]
+        _, memory_out = run_command_with_options(memory_cmd, timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        modules = parse_json_payload(memory_out)
+        if modules:
+            capacities: list[int] = []
+            speeds: list[int] = []
+            for module in modules:
+                try:
+                    capacities.append(int(str(module.get("Capacity", "0")).strip() or "0"))
+                except ValueError:
+                    capacities.append(0)
+
+                configured_speed = str(module.get("ConfiguredClockSpeed", "")).strip()
+                fallback_speed = str(module.get("Speed", "")).strip()
+                speed_value = configured_speed or fallback_speed
+                try:
+                    if speed_value:
+                        speeds.append(int(speed_value))
+                except ValueError:
+                    continue
+
+            module_count = len(modules)
+            total_capacity = sum(capacities)
+            self.log_line.emit(format_kv_line("Modules", str(module_count)))
+            if total_capacity > 0:
+                self.log_line.emit(format_kv_line("Quantity", format_memory_gib(total_capacity)))
+            else:
+                self.log_line.emit(format_kv_line("Quantity", "Unknown"))
+
+            if speeds:
+                unique_speeds = sorted(set(speeds))
+                if len(unique_speeds) == 1:
+                    speed_text = f"{unique_speeds[0]} MT/s"
+                else:
+                    speed_text = ", ".join(f"{speed} MT/s" for speed in unique_speeds)
+                self.log_line.emit(format_kv_line("Speed", speed_text))
+            else:
+                self.log_line.emit(format_kv_line("Speed", "Unknown"))
+        else:
+            self.log_line.emit(format_kv_line("RAM", "Unable to query"))
+        self.log_line.emit("")
+        self.step_finished.emit("Memory", bool(modules))
 
         if self._cancelled():
             self.completed.emit(False, "cancelled")
