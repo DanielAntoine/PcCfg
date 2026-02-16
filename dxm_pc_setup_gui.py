@@ -152,8 +152,12 @@ def status_tag(ok: bool) -> str:
     return "Ok" if ok else "Not Ok"
 
 
-def format_status_line(label: str, value: str, ok: bool) -> str:
-    return f"{label:<28}: {value} [{status_tag(ok)}]"
+STATUS_LABEL_WIDTH = 28
+
+
+def format_status_line(label: str, value: str, ok: bool, width: int = STATUS_LABEL_WIDTH) -> str:
+    """Format status output with a consistently aligned value separator."""
+    return f"{label:<{width}}: {value} [{status_tag(ok)}]"
 
 
 def format_kv_line(label: str, value: str, width: int = 10) -> str:
