@@ -309,7 +309,7 @@ class MainWindow(QtWidgets.QWidget):
             self.apps_layout.addWidget(cb)
         self.apps_layout.addStretch(1)
 
-        self.manual_group = QtWidgets.QGroupBox("Manual install")
+        self.manual_group = QtWidgets.QGroupBox("Manual installs (website)")
         self.manual_layout = QtWidgets.QVBoxLayout(self.manual_group)
         current_manual_category: str | None = None
         for manual_app in self.manual_install_apps:
@@ -323,7 +323,7 @@ class MainWindow(QtWidgets.QWidget):
 
             row = QtWidgets.QHBoxLayout()
             label = QtWidgets.QLabel(manual_app.label)
-            button = QtWidgets.QPushButton("Open website")
+            button = QtWidgets.QPushButton("Open official site")
             button.clicked.connect(
                 lambda _checked=False, item=manual_app: self._open_manual_install_link(item)
             )

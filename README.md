@@ -91,3 +91,14 @@ Install-Package <name> -Force -Confirm:$false
 - Use `--exact` with `winget` to avoid ambiguous package matches.
 - Keep installers idempotent in scripts (check whether software is already installed before re-running).
 - Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
+
+
+## Applications section behavior
+- **Applications** contains only app IDs currently confirmed to resolve with `winget show --id <id> --exact`.
+- Apps that are not currently resolvable in winget are listed under **Manual installs (website)** in the GUI.
+- The manual section includes one button per app to open the vendor website directly.
+
+Current manual-install apps in the UI:
+- DaVinci Resolve
+- Blackmagic Desktop Video
+
