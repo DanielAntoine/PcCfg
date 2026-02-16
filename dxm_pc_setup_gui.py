@@ -31,7 +31,7 @@ CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_
 CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Client name": "text",
     "Computer role": "text",
-    "Numbering00 (e.g., 01, 02, 03)": "text",
+    "Numbering00 (e.g., 01, 02, 03)": "numbering",
     "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}": "text",
     "Inventory ID": "text",
     "Technician": "text",
@@ -1111,6 +1111,12 @@ class MainWindow(QtWidgets.QWidget):
                     value_input.dateChanged.connect(
                         lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
                     )
+                elif field_type == "numbering":
+                    value_input = QtWidgets.QComboBox()
+                    value_input.addItems([f"{number:02d}" for number in range(1, 100)])
+                    value_input.currentTextChanged.connect(
+                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                    )
                 else:
                     value_input = QtWidgets.QLineEdit()
                     value_input.setPlaceholderText("Add details")
@@ -1214,9 +1220,9 @@ class MainWindow(QtWidgets.QWidget):
         self._last_autofill_values[field_label] = proposed_value
 
     def _build_hostname_value(self) -> str:
-        client_name = self._to_pascal_case_alnum(self._get_line_edit_value(CLIENT_NAME_FIELD))
-        role_value = self._to_alnum(self._get_line_edit_value(COMPUTER_ROLE_FIELD)).upper()
-        numbering_value = self._to_alnum(self._get_line_edit_value(NUMBERING_FIELD))
+        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD))
+        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD)).upper()
+        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD))
 
         role_prefix = role_value[:2]
         return f"{client_name}{role_prefix}{numbering_value}"
@@ -1224,6 +1230,15 @@ class MainWindow(QtWidgets.QWidget):
     @staticmethod
     def _to_alnum(value: str) -> str:
         return "".join(char for char in value if char.isalnum())
+
+    @classmethod
+    def _normalize_numbering_value(cls, value: str) -> str:
+        alnum_value = cls._to_alnum(value)
+        if alnum_value.isdigit():
+            numeric_value = int(alnum_value)
+            if 1 <= numeric_value <= 99:
+                return f"{numeric_value:02d}"
+        return alnum_value
 
     @classmethod
     def _to_pascal_case_alnum(cls, value: str) -> str:
@@ -1237,15 +1252,17 @@ class MainWindow(QtWidgets.QWidget):
         else:
             date_value = datetime.now().strftime("%Y%m%d")
 
-        inventory_id = self._get_line_edit_value(INVENTORY_ID_FIELD)
+        inventory_id = self._get_checklist_info_text(INVENTORY_ID_FIELD)
         main_parts = [part for part in [date_value, inventory_id] if part]
         base_name = "_".join(main_parts) if main_parts else date_value
         return f"{base_name}_Step_001.jpg"
 
-    def _get_line_edit_value(self, field_label: str) -> str:
+    def _get_checklist_info_text(self, field_label: str) -> str:
         widget = self.checklist_info_inputs.get(field_label)
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
+        if isinstance(widget, QtWidgets.QComboBox):
+            return widget.currentText().strip()
         return ""
 
     def _update_installation_checklist_progress(self) -> None:
@@ -1300,7 +1317,7 @@ class MainWindow(QtWidgets.QWidget):
             self._is_loading_checklist_state = False
 
         for key in (HOSTNAME_FIELD, FILE_NAME_FIELD):
-            value = self._get_line_edit_value(key)
+            value = self._get_checklist_info_text(key)
             self._last_autofill_values[key] = value
 
         self._apply_checklist_autofill()
@@ -1367,6 +1384,8 @@ class MainWindow(QtWidgets.QWidget):
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
+        if isinstance(widget, QtWidgets.QComboBox):
+            return widget.currentText().strip()
         if isinstance(widget, QtWidgets.QDateEdit):
             return widget.date().toString("yyyy-MM-dd")
         return ""
@@ -1374,6 +1393,11 @@ class MainWindow(QtWidgets.QWidget):
     def _set_checklist_info_value(self, widget: QtWidgets.QWidget, value: str) -> None:
         if isinstance(widget, QtWidgets.QLineEdit):
             widget.setText(value)
+            return
+        if isinstance(widget, QtWidgets.QComboBox):
+            normalized_value = self._normalize_numbering_value(value)
+            index = widget.findText(normalized_value)
+            widget.setCurrentIndex(index if index >= 0 else 0)
             return
         if isinstance(widget, QtWidgets.QDateEdit):
             parsed_date = QtCore.QDate.fromString(value, "yyyy-MM-dd")
