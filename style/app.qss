@@ -8,15 +8,17 @@ QWidget {
 QGroupBox {
     border: 1px solid #374151;
     border-radius: 8px;
-    margin-top: 12px;
-    padding: 12px;
+    margin-top: 18px;
+    padding: 16px 12px 12px 12px;
     font-weight: 600;
 }
 
 QGroupBox::title {
     subcontrol-origin: margin;
+    subcontrol-position: top left;
     left: 10px;
-    padding: 0 4px;
+    padding: 0 6px;
+    background-color: #111827;
     color: #93c5fd;
 }
 
