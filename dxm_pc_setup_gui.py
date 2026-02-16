@@ -155,8 +155,13 @@ def format_status_line(label: str, value: str, ok: bool) -> str:
     return f"{label:<28}: {value} [{status_tag(ok)}]"
 
 
-def readable_timeout(minutes: int) -> str:
-    return "Disabled" if minutes == 0 else f"{minutes} min"
+def readable_timeout_seconds(seconds: int) -> str:
+    """Format powercfg timeout values (reported in seconds) for display."""
+    if seconds == 0:
+        return "Disabled"
+    if seconds % 60 == 0:
+        return f"{seconds // 60} min"
+    return f"{seconds} sec"
 
 
 
@@ -563,7 +568,7 @@ class MainWindow(QtWidgets.QWidget):
                 "STANDBYIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -573,7 +578,7 @@ class MainWindow(QtWidgets.QWidget):
                 "HIBERNATEIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -583,7 +588,7 @@ class MainWindow(QtWidgets.QWidget):
                 "DISKIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=readable_timeout,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
@@ -591,9 +596,9 @@ class MainWindow(QtWidgets.QWidget):
                 "Monitor timeout",
                 "SUB_VIDEO",
                 "VIDEOIDLE",
-                expected_ac=30,
-                expected_dc=30,
-                value_formatter=readable_timeout,
+                expected_ac=1800,
+                expected_dc=1800,
+                value_formatter=readable_timeout_seconds,
             )
         )
         lines.append(
