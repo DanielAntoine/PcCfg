@@ -273,6 +273,11 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         selected = [t for t in self.apply_tasks if self.task_checkboxes[t.key].isChecked()]
+        if self.task_checkboxes["rename_pc"].isChecked() and not self.rename_input.text().strip():
+            selected = [t for t in selected if t.key != "rename_pc"]
+            self._append("Rename computer step skipped (name is empty).")
+            self._append()
+
         if not selected:
             self._append("No APPLY options selected.")
             return
@@ -294,7 +299,6 @@ class MainWindow(QtWidgets.QWidget):
     def _rename_computer_action(self) -> list[str]:
         new_name = self.rename_input.text().strip()
         if not new_name:
-            self._append("  Rename skipped.")
             return []
 
         sanitized = new_name.strip().replace("'", "")
