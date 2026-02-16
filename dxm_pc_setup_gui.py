@@ -28,6 +28,8 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_log.json")
 CHECKLIST_TASK_MAX_LEN = 52
+CHECKLIST_WRAP_LINE_LEN = 64
+STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING")
 
 CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Client name": "text",
@@ -382,6 +384,27 @@ def shorten_task_label(label: str, max_len: int = CHECKLIST_TASK_MAX_LEN) -> str
     return f"{normalized[: max_len - 1].rstrip()}…"
 
 
+def wrap_task_label(label: str, line_len: int = CHECKLIST_WRAP_LINE_LEN) -> str:
+    """Wrap checklist labels to at most two lines without reserving extra height."""
+    normalized = " ".join(label.split())
+    if len(normalized) <= line_len:
+        return normalized
+
+    words = normalized.split(" ")
+    first_line: list[str] = []
+    for word in words:
+        candidate = " ".join(first_line + [word]).strip()
+        if len(candidate) > line_len and first_line:
+            break
+        first_line.append(word)
+
+    first = " ".join(first_line).strip()
+    remainder = normalized[len(first) :].strip()
+    if not remainder:
+        return first
+    return f"{first}\n{shorten_task_label(remainder, max_len=line_len)}"
+
+
 STATUS_LABEL_WIDTH = 28
 
 
@@ -426,6 +449,86 @@ def query_password_required_status(cancel_requested: Callable[[], bool] | None =
             return False
 
     return None
+
+
+def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Detect whether a Wi-Fi adapter exists."""
+    command = (
+        "$a = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.InterfaceDescription -match 'Wi-Fi|Wireless|WLAN' -or $_.Name -match 'Wi-Fi|Wireless|WLAN' }; "
+        "if ($a) { $a | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress }"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    adapters: list[str] = []
+    raw = output.strip()
+    if raw:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = raw
+
+        if isinstance(payload, str):
+            adapters = [payload.strip()] if payload.strip() else []
+        elif isinstance(payload, list):
+            adapters = [str(item).strip() for item in payload if str(item).strip()]
+    if adapters:
+        return True, ", ".join(adapters)
+    return False, "No Wi-Fi adapter found"
+
+
+def detect_wifi_connection(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Detect Wi-Fi connection state and include SSID/signal when available."""
+    rc, output = run_command_with_options(
+        ["netsh", "wlan", "show", "interfaces"],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    state_match = re.search(r"^\s*State\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
+    ssid_match = re.search(r"^\s*SSID\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
+    signal_match = re.search(r"^\s*Signal\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
+
+    state_value = state_match.group(1).strip() if state_match else "Unknown"
+    connected = state_value.lower() == "connected"
+    if connected:
+        ssid = ssid_match.group(1).strip() if ssid_match else "Unknown"
+        signal = signal_match.group(1).strip() if signal_match else "Unknown"
+        return True, f"Connected ({ssid}, {signal})"
+    return False, f"{state_value}"
+
+
+def detect_internet_reachability(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Detect internet reachability via DNS and ICMP checks."""
+    dns_cmd = "Resolve-DnsName -Name microsoft.com -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty NameHost"
+    ping_cmd = "Test-Connection -ComputerName 1.1.1.1 -Count 1 -Quiet"
+    dns_rc, dns_out = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", dns_cmd],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    ping_rc, ping_out = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", ping_cmd],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+
+    if dns_rc != 0 and ping_rc != 0:
+        return None, "Unable to query"
+
+    dns_ok = bool(compact_single_line(dns_out))
+    ping_ok = compact_single_line(ping_out).lower() == "true"
+    reachable = dns_ok or ping_ok
+    detail = f"DNS={'OK' if dns_ok else 'FAIL'}, Ping={'OK' if ping_ok else 'FAIL'}"
+    return reachable, detail
 
 
 
@@ -728,6 +831,7 @@ class SetupWorker(QtCore.QObject):
     log_line = QtCore.pyqtSignal(str)
     step_started = QtCore.pyqtSignal(str)
     step_finished = QtCore.pyqtSignal(str, bool)
+    checklist_status = QtCore.pyqtSignal(str, str, bool, str)
     completed = QtCore.pyqtSignal(bool, str)
 
     def __init__(
@@ -780,6 +884,14 @@ class SetupWorker(QtCore.QObject):
         if self._cancelled():
             self.completed.emit(False, "cancelled")
             return
+
+        inspect_checks = {
+            "Install network drivers (LAN/10GbE/Wi-Fi)": "RUNNING",
+            "Test Wi-Fi": "RUNNING",
+            "Test remote connection": "RUNNING",
+        }
+        for task_label, status in inspect_checks.items():
+            self.checklist_status.emit(task_label, status, False, "Inspect in progress")
 
         if not is_windows():
             self.log_line.emit("[ERROR] This tool is intended for Windows.")
@@ -897,6 +1009,57 @@ class SetupWorker(QtCore.QObject):
             self.log_line.emit(format_kv_line("GPU", "No NVIDIA/AMD/Blackmagic video card detected"))
         self.log_line.emit("")
         self.step_finished.emit("Target video cards", True)
+
+        if self._cancelled():
+            self.completed.emit(False, "cancelled")
+            return
+
+        self.step_started.emit("Connectivity")
+        self.log_line.emit("Connectivity")
+        self.log_line.emit("-" * 60)
+
+        wifi_adapter_ok, wifi_adapter_detail = detect_wifi_adapter(self._cancelled)
+        wifi_connected_ok, wifi_connected_detail = detect_wifi_connection(self._cancelled)
+        internet_ok, internet_detail = detect_internet_reachability(self._cancelled)
+
+        if wifi_adapter_ok is None:
+            self.log_line.emit(format_status_line("Wi-Fi adapter", wifi_adapter_detail, False))
+            self.checklist_status.emit("Install network drivers (LAN/10GbE/Wi-Fi)", "PENDING", False, wifi_adapter_detail)
+        else:
+            self.log_line.emit(format_status_line("Wi-Fi adapter", wifi_adapter_detail, wifi_adapter_ok))
+            self.checklist_status.emit(
+                "Install network drivers (LAN/10GbE/Wi-Fi)",
+                "PASS" if wifi_adapter_ok else "FAIL",
+                wifi_adapter_ok,
+                wifi_adapter_detail,
+            )
+
+        if wifi_connected_ok is None:
+            self.log_line.emit(format_status_line("Wi-Fi connection", wifi_connected_detail, False))
+            self.checklist_status.emit("Test Wi-Fi", "PENDING", False, wifi_connected_detail)
+        else:
+            self.log_line.emit(format_status_line("Wi-Fi connection", wifi_connected_detail, wifi_connected_ok))
+            self.checklist_status.emit(
+                "Test Wi-Fi",
+                "PASS" if wifi_connected_ok else "FAIL",
+                wifi_connected_ok,
+                wifi_connected_detail,
+            )
+
+        if internet_ok is None:
+            self.log_line.emit(format_status_line("Internet", internet_detail, False))
+            self.checklist_status.emit("Test remote connection", "PENDING", False, internet_detail)
+        else:
+            self.log_line.emit(format_status_line("Internet", internet_detail, internet_ok))
+            self.checklist_status.emit(
+                "Test remote connection",
+                "PASS" if internet_ok else "FAIL",
+                internet_ok,
+                internet_detail,
+            )
+
+        self.log_line.emit("")
+        self.step_finished.emit("Connectivity", True)
         self.completed.emit(True, "done")
 
     def _run_apply(self) -> None:
@@ -1009,7 +1172,8 @@ class MainWindow(QtWidgets.QWidget):
         self.manual_install_apps = self._build_manual_install_apps()
         self.app_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
         self.rename_input = QtWidgets.QLineEdit()
-        self.rename_input.setPlaceholderText("New computer name")
+        self.rename_input.setPlaceholderText("Auto-generated from checklist hostname")
+        self.rename_input.setReadOnly(True)
         self.rename_input.setEnabled(False)
 
         self.tasks_group = QtWidgets.QGroupBox("APPLY Options")
@@ -1076,17 +1240,21 @@ class MainWindow(QtWidgets.QWidget):
 
         self.installation_checklist_tree = QtWidgets.QTreeWidget()
         self.installation_checklist_tree.setObjectName("installationChecklistTree")
-        self.installation_checklist_tree.setColumnCount(2)
-        self.installation_checklist_tree.setHeaderLabels(["Task", "Info"])
+        self.installation_checklist_tree.setColumnCount(3)
+        self.installation_checklist_tree.setHeaderLabels(["Task", "Status", "Info"])
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setMouseTracking(True)
         self.installation_checklist_tree.setAlternatingRowColors(True)
-        self.installation_checklist_tree.setUniformRowHeights(True)
+        self.installation_checklist_tree.setUniformRowHeights(False)
+        self.installation_checklist_tree.setIndentation(0)
         self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
         self.installation_checklist_tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.installation_checklist_tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Interactive)
-        self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+        self.installation_checklist_tree.header().setStretchLastSection(False)
+        self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+        self.installation_checklist_tree.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
+        self.installation_checklist_tree.setColumnWidth(1, 110)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
         self.checklist_status_bar = QtWidgets.QLabel("Ready")
@@ -1105,9 +1273,12 @@ class MainWindow(QtWidgets.QWidget):
         self._is_autofilling_checklist_info = False
         self._last_autofill_values: dict[str, str] = {}
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
+        self.checklist_item_by_label: dict[str, QtWidgets.QTreeWidgetItem] = {}
+        self.checklist_status_chips: dict[str, QtWidgets.QLabel] = {}
+        self.checklist_runtime_status: dict[str, tuple[str, str]] = {}
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
         for section_label, section_items in INSTALLATION_PC_CHECKLIST:
-            section_header = QtWidgets.QTreeWidgetItem([section_label, ""])
+            section_header = QtWidgets.QTreeWidgetItem([section_label, "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
             section_header.setFirstColumnSpanned(True)
             section_font = section_header.font(0)
@@ -1116,14 +1287,23 @@ class MainWindow(QtWidgets.QWidget):
             self.installation_checklist_tree.addTopLevelItem(section_header)
 
             for item_label in section_items:
-                short_label = shorten_task_label(item_label)
-                checklist_item = QtWidgets.QTreeWidgetItem([short_label, ""])
+                wrapped_label = wrap_task_label(item_label)
+                checklist_item = QtWidgets.QTreeWidgetItem([wrapped_label, "", ""])
                 checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
                 checklist_item.setData(0, QtCore.Qt.UserRole, item_label)
                 checklist_item.setToolTip(0, item_label)
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
                 self.installation_checklist_items.append(checklist_item)
+                self.checklist_item_by_label[item_label] = checklist_item
+
+                status_chip = QtWidgets.QLabel("PENDING")
+                status_chip.setObjectName("checklistStatusChip")
+                status_chip.setProperty("chipStatus", "PENDING")
+                status_chip.setAlignment(QtCore.Qt.AlignCenter)
+                self.installation_checklist_tree.setItemWidget(checklist_item, 1, status_chip)
+                self.checklist_status_chips[item_label] = status_chip
+                self.checklist_runtime_status[item_label] = ("PENDING", "Waiting")
 
                 field_type = CHECKLIST_INFO_FIELD_TYPES.get(item_label)
                 if field_type is None:
@@ -1146,19 +1326,21 @@ class MainWindow(QtWidgets.QWidget):
                 else:
                     value_input = QtWidgets.QLineEdit()
                     value_input.setPlaceholderText("Add details")
+                    if item_label == HOSTNAME_FIELD:
+                        value_input.setReadOnly(True)
+                        value_input.setPlaceholderText("Auto-generated")
                     value_input.textChanged.connect(
                         lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
                     )
 
-                self.installation_checklist_tree.setItemWidget(checklist_item, 1, value_input)
+                self.installation_checklist_tree.setItemWidget(checklist_item, 2, value_input)
                 self.checklist_info_inputs[item_label] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
         self.installation_checklist_tree.itemEntered.connect(self._on_checklist_item_hovered)
-        self.installation_checklist_tree.resizeColumnToContents(1)
-        info_column_width = self.installation_checklist_tree.columnWidth(1)
-        self.installation_checklist_tree.setColumnWidth(0, max(info_column_width * 2, 420))
+        self.installation_checklist_tree.resizeColumnToContents(2)
+        self.installation_checklist_tree.setColumnWidth(1, 110)
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(820)
@@ -1205,6 +1387,14 @@ class MainWindow(QtWidgets.QWidget):
         self._apply_checklist_autofill()
 
     def _on_installation_checklist_item_changed(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
+        if _item is not None and _column == 0:
+            task_label = _item.data(0, QtCore.Qt.UserRole)
+            if isinstance(task_label, str) and task_label:
+                if _item.checkState(0) == QtCore.Qt.Checked:
+                    self._set_checklist_item_status(task_label, "PASS", "Checked")
+                elif self.checklist_runtime_status.get(task_label, ("", ""))[0] in {"PASS", "PENDING"}:
+                    self._set_checklist_item_status(task_label, "PENDING", "Waiting")
+
         self._update_installation_checklist_progress()
         if self._is_loading_checklist_state:
             return
@@ -1228,7 +1418,8 @@ class MainWindow(QtWidgets.QWidget):
         full_text = item.data(0, QtCore.Qt.UserRole)
         if not isinstance(full_text, str) or not full_text:
             full_text = item.text(0)
-        self.checklist_status_bar.setText(full_text)
+        runtime_state = self.checklist_runtime_status.get(full_text, ("PENDING", "Waiting"))
+        self.checklist_status_bar.setText(f"{full_text} [{runtime_state[0]}] - {runtime_state[1]}")
 
     def _on_checklist_info_field_changed(self, field_label: str) -> None:
         if self._is_loading_checklist_state:
@@ -1244,6 +1435,9 @@ class MainWindow(QtWidgets.QWidget):
         if field_label in source_fields and not self._is_autofilling_checklist_info:
             self._apply_checklist_autofill()
 
+        if field_label == HOSTNAME_FIELD:
+            self.rename_input.setText(self._get_checklist_info_text(HOSTNAME_FIELD))
+
         self._save_installation_checklist_state()
 
     def _apply_checklist_autofill(self) -> None:
@@ -1251,6 +1445,34 @@ class MainWindow(QtWidgets.QWidget):
         file_name_text = self._build_file_name_value()
         self._autofill_line_edit(HOSTNAME_FIELD, hostname_text)
         self._autofill_line_edit(FILE_NAME_FIELD, file_name_text)
+        self.rename_input.setText(hostname_text)
+
+    def _set_checklist_item_status(self, task_label: str, status: str, detail: str) -> None:
+        if status not in STATUS_CHIP_STATES:
+            status = "PENDING"
+
+        chip = self.checklist_status_chips.get(task_label)
+        if chip is not None:
+            chip.setText(status)
+            chip.setProperty("chipStatus", status)
+            chip.style().unpolish(chip)
+            chip.style().polish(chip)
+            chip.update()
+
+        self.checklist_runtime_status[task_label] = (status, detail)
+
+    @QtCore.pyqtSlot(str, str, bool, str)
+    def _on_inspect_checklist_status(self, task_label: str, status: str, should_check: bool, detail: str) -> None:
+        item = self.checklist_item_by_label.get(task_label)
+        if item is None:
+            return
+        self._set_checklist_item_status(task_label, status, detail)
+        if should_check and status == "PASS":
+            item.setCheckState(0, QtCore.Qt.Checked)
+        elif status == "FAIL":
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+        elif status == "PENDING" and item.checkState(0) != QtCore.Qt.Checked:
+            item.setCheckState(0, QtCore.Qt.Unchecked)
 
     def _autofill_line_edit(self, field_label: str, proposed_value: str) -> None:
         widget = self.checklist_info_inputs.get(field_label)
@@ -1327,7 +1549,7 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         checklist_state = {
-            item.text(0): item.checkState(0) == QtCore.Qt.Checked
+            str(item.data(0, QtCore.Qt.UserRole) or item.text(0)): item.checkState(0) == QtCore.Qt.Checked
             for item in self.installation_checklist_items
         }
         checklist_info = {
@@ -1360,7 +1582,8 @@ class MainWindow(QtWidgets.QWidget):
         self._is_loading_checklist_state = True
         try:
             for item in self.installation_checklist_items:
-                checked = bool(persisted_items.get(item.text(0), False))
+                key = str(item.data(0, QtCore.Qt.UserRole) or item.text(0))
+                checked = bool(persisted_items.get(key, False))
                 item.setCheckState(0, QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
 
             for key, widget in self.checklist_info_inputs.items():
@@ -1379,6 +1602,9 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 item.setCheckState(0, QtCore.Qt.Unchecked)
+                task_label = item.data(0, QtCore.Qt.UserRole)
+                if isinstance(task_label, str):
+                    self._set_checklist_item_status(task_label, "PENDING", "Waiting")
             for widget in self.checklist_info_inputs.values():
                 self._set_checklist_info_value(widget, "")
         finally:
@@ -1676,6 +1902,7 @@ class MainWindow(QtWidgets.QWidget):
         self._worker.moveToThread(self._worker_thread)
 
         worker.log_line.connect(self._append)
+        worker.checklist_status.connect(self._on_inspect_checklist_status)
         worker.completed.connect(self._on_worker_completed)
 
         self._worker_thread.started.connect(worker.run)
