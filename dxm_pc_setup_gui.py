@@ -155,6 +155,10 @@ def format_status_line(label: str, value: str, ok: bool) -> str:
     return f"{label:<28}: {value} [{status_tag(ok)}]"
 
 
+def readable_timeout(minutes: int) -> str:
+    return "Disabled" if minutes == 0 else f"{minutes} min"
+
+
 
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     """Parse JSON produced by PowerShell's ConvertTo-Json output."""
@@ -449,18 +453,6 @@ class MainWindow(QtWidgets.QWidget):
         self._append(f"Time      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self._append(f"Computer  : {os.environ.get('COMPUTERNAME', 'Unknown')}")
         self._append()
-        self._append("APPLY options")
-        self._append("-" * 60)
-        for task in self.apply_tasks:
-            selected = self.task_checkboxes[task.key].isChecked()
-            suffix = ""
-            if task.key == "rename_pc" and selected:
-                rename_target = self.rename_input.text().strip() or "<empty>"
-                suffix = f" (target: {rename_target})"
-            marker = "X" if selected else " "
-            self._append(f"[{marker}] {task.label}{suffix}")
-        self._append()
-
         self._append("APPLY option status")
         self._append("-" * 60)
         for line in self._build_apply_status_lines():
@@ -541,8 +533,17 @@ class MainWindow(QtWidgets.QWidget):
         if ac_value is None or dc_value is None:
             return format_status_line(label, "Unable to query", False)
 
-        display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
         ok = ac_value == expected_ac and dc_value == expected_dc
+        if ac_value == dc_value:
+            current_value = value_formatter(ac_value)
+            expected_value = value_formatter(expected_ac)
+            display = current_value if ok else f"{current_value} (expected {expected_value})"
+            return format_status_line(label, display, ok)
+
+        display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
+        if not ok:
+            expected_display = f"AC={value_formatter(expected_ac)}, DC={value_formatter(expected_dc)}"
+            display = f"{display} (expected {expected_display})"
         return format_status_line(label, display, ok)
 
     def _build_apply_status_lines(self) -> list[str]:
@@ -555,7 +556,6 @@ class MainWindow(QtWidgets.QWidget):
         active_ok = high_perf_guid in active_line or "high performance" in active_line
         lines.append(format_status_line("Active power plan", active_plan, active_ok))
 
-        minutes = lambda value: f"{value} min"
         lines.append(
             self._format_power_dual_status(
                 "Sleep timeout",
@@ -563,7 +563,7 @@ class MainWindow(QtWidgets.QWidget):
                 "STANDBYIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=minutes,
+                value_formatter=readable_timeout,
             )
         )
         lines.append(
@@ -573,7 +573,7 @@ class MainWindow(QtWidgets.QWidget):
                 "HIBERNATEIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=minutes,
+                value_formatter=readable_timeout,
             )
         )
         lines.append(
@@ -583,7 +583,7 @@ class MainWindow(QtWidgets.QWidget):
                 "DISKIDLE",
                 expected_ac=0,
                 expected_dc=0,
-                value_formatter=minutes,
+                value_formatter=readable_timeout,
             )
         )
         lines.append(
@@ -593,7 +593,7 @@ class MainWindow(QtWidgets.QWidget):
                 "VIDEOIDLE",
                 expected_ac=30,
                 expected_dc=30,
-                value_formatter=minutes,
+                value_formatter=readable_timeout,
             )
         )
         lines.append(
@@ -614,7 +614,7 @@ class MainWindow(QtWidgets.QWidget):
         if fast_startup is None:
             lines.append(format_status_line("Fast Startup", "Unable to query", False))
         else:
-            lines.append(format_status_line("Fast Startup", "Disable" if fast_startup == 0 else "Enable", fast_startup == 0))
+            lines.append(format_status_line("Fast Startup", "Disabled" if fast_startup == 0 else "Enabled", fast_startup == 0))
 
         game_dvr_policy = self._query_registry_dword(
             "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
@@ -623,7 +623,8 @@ class MainWindow(QtWidgets.QWidget):
         if game_dvr_policy is None:
             lines.append(format_status_line("Policy: AllowGameDVR", "Unable to query", False))
         else:
-            lines.append(format_status_line("Policy: AllowGameDVR", str(game_dvr_policy), game_dvr_policy == 0))
+            policy_value = "Disabled" if game_dvr_policy == 0 else "Enabled"
+            lines.append(format_status_line("Policy: AllowGameDVR", policy_value, game_dvr_policy == 0))
 
         visual_fx = self._query_registry_dword(
             "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
@@ -632,7 +633,8 @@ class MainWindow(QtWidgets.QWidget):
         if visual_fx is None:
             lines.append(format_status_line("Visual effects", "Unable to query", False))
         else:
-            lines.append(format_status_line("Visual effects", str(visual_fx), visual_fx == 2))
+            visual_fx_value = "Best performance" if visual_fx == 2 else f"Custom ({visual_fx})"
+            lines.append(format_status_line("Visual effects", visual_fx_value, visual_fx == 2))
 
         thumbnails = self._query_registry_dword(
             "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
