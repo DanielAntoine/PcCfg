@@ -1085,7 +1085,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
         self.installation_checklist_tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.installation_checklist_tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Interactive)
         self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
@@ -1156,9 +1156,12 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
         self.installation_checklist_tree.itemEntered.connect(self._on_checklist_item_hovered)
+        self.installation_checklist_tree.resizeColumnToContents(1)
+        info_column_width = self.installation_checklist_tree.columnWidth(1)
+        self.installation_checklist_tree.setColumnWidth(0, max(info_column_width * 2, 420))
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
-        self.installation_checklist_group.setMinimumWidth(460)
+        self.installation_checklist_group.setMinimumWidth(720)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
@@ -1182,7 +1185,7 @@ class MainWindow(QtWidgets.QWidget):
         right_column = QtWidgets.QHBoxLayout()
         right_column.addWidget(self.apps_group, stretch=1)
         right_column.addWidget(self.manual_group, stretch=1)
-        right_column.addWidget(self.installation_checklist_group, stretch=2)
+        right_column.addWidget(self.installation_checklist_group, stretch=4)
 
         layout.addLayout(left_column, stretch=3)
         layout.addLayout(right_column, stretch=2)
