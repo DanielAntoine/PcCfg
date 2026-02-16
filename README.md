@@ -91,3 +91,8 @@ Install-Package <name> -Force -Confirm:$false
 - Use `--exact` with `winget` to avoid ambiguous package matches.
 - Keep installers idempotent in scripts (check whether software is already installed before re-running).
 - Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
+
+## TODO
+[] make "task" culumn double the wight but keep "info" the same, so make Istallation Pc checklist Larger
+[] make the computer name the same as hostname, remove computer name manuel input, host name must containe the 3 element 
+[] List what can be check in the checklist using the inspect button. Example is Wifi connected
