@@ -93,6 +93,7 @@ Install-Package <name> -Force -Confirm:$false
 - Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
 
 ## TODO
-[] make "task" culumn double the wight but keep "info" the same, so make Istallation Pc checklist Larger
+[] culumn info is way to far to the right or task start way to large
 [] make the computer name the same as hostname, remove computer name manuel input, host name must containe the 3 element 
 [] List what can be check in the checklist using the inspect button. Example is Wifi connected
+[] make the inspect check in the checklist when ok
