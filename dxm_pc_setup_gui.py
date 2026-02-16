@@ -753,7 +753,10 @@ class MainWindow(QtWidgets.QWidget):
             self._append("Applications installation")
             self._append("-" * 30)
             for idx, app in enumerate(selected_apps, start=1):
-                cmd = f"winget install --id {app.winget_id} -e --accept-package-agreements --accept-source-agreements"
+                cmd = (
+                    f"winget install --id {app.winget_id} -e --silent --disable-interactivity "
+                    "--accept-package-agreements --accept-source-agreements"
+                )
                 self._append(f"[{idx}/{len(selected_apps)}] {app.label}")
                 rc, out = run_command(cmd)
                 status = "OK" if rc == 0 else f"FAIL (exit {rc})"
