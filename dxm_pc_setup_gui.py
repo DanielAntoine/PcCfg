@@ -1070,6 +1070,8 @@ class MainWindow(QtWidgets.QWidget):
             InstallApp("everything", "Everything", "voidtools.Everything", "Utilities for creators"),
             InstallApp("crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo", "Utilities for creators"),
             InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
+            InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support"),
+            InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support"),
         ]
 
 
@@ -1086,6 +1088,24 @@ class MainWindow(QtWidgets.QWidget):
                 "Blackmagic Desktop Video",
                 "Capture card drivers / tools",
                 "https://www.blackmagicdesign.com/support/family/capture-and-playback",
+            ),
+            ManualInstallApp(
+                "screenconnect_host_access",
+                "ScreenConnect Host Access",
+                "Remote support",
+                "https://dxmtechnologie.screenconnect.com/Host#Access",
+            ),
+            ManualInstallApp(
+                "creative_cloud",
+                "Adobe Creative Cloud",
+                "Creative tools",
+                "https://creativecloud.adobe.com/apps/download/creative-cloud",
+            ),
+            ManualInstallApp(
+                "vmix",
+                "vMix",
+                "Live production / streaming",
+                "https://www.vmix.com/software/download.aspx",
             ),
         ]
 
