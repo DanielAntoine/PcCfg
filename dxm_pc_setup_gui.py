@@ -1064,7 +1064,7 @@ class MainWindow(QtWidgets.QWidget):
             self.installation_checklist_tree.addTopLevelItem(section_header)
 
             for item_label in section_items:
-                checklist_item = QtWidgets.QTreeWidgetItem([f"☐ {item_label}"])
+                checklist_item = QtWidgets.QTreeWidgetItem([item_label])
                 checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
