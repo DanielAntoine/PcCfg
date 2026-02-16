@@ -13,12 +13,13 @@ import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, overload
+from typing import Callable, Sequence, overload
 
 from PyQt5 import QtCore, QtWidgets
 
@@ -42,6 +43,19 @@ class InstallApp:
     category: str
 
 
+@dataclass
+class ExecutionStep:
+    label: str
+    commands: list[list[str]]
+
+
+COMMAND_CANCEL_EXIT_CODE = -9
+COMMAND_TIMEOUT_EXIT_CODE = -124
+DEFAULT_INSPECT_TIMEOUT_SEC = 30
+DEFAULT_APPLY_TIMEOUT_SEC = 120
+DEFAULT_INSTALL_TIMEOUT_SEC = 1200
+
+
 @overload
 def run_command(command: str) -> tuple[int, str]: ...
 
@@ -52,8 +66,19 @@ def run_command(command: list[str]) -> tuple[int, str]: ...
 
 def run_command(command: str | list[str]) -> tuple[int, str]:
     """Run command and return (return_code, output)."""
-    args = command if isinstance(command, list) else command.split()
-    proc = subprocess.run(
+    return run_command_with_options(command)
+
+
+def run_command_with_options(
+    command: str | list[str],
+    *,
+    timeout_sec: float | None = None,
+    cancel_requested: Callable[[], bool] | None = None,
+    poll_interval_sec: float = 0.2,
+) -> tuple[int, str]:
+    """Run command with optional timeout/cancellation support."""
+    args = command if isinstance(command, list) else shlex.split(command)
+    proc = subprocess.Popen(
         args,
         shell=False,
         stdout=subprocess.PIPE,
@@ -62,7 +87,33 @@ def run_command(command: str | list[str]) -> tuple[int, str]:
         encoding="utf-8",
         errors="ignore",
     )
-    return proc.returncode, proc.stdout.strip()
+
+    deadline = None if timeout_sec is None else datetime.now().timestamp() + timeout_sec
+    while True:
+        if cancel_requested and cancel_requested():
+            proc.terminate()
+            try:
+                stdout, _ = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, _ = proc.communicate()
+            return COMMAND_CANCEL_EXIT_CODE, stdout.strip()
+
+        if deadline is not None and datetime.now().timestamp() >= deadline:
+            proc.terminate()
+            try:
+                stdout, _ = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, _ = proc.communicate()
+            return COMMAND_TIMEOUT_EXIT_CODE, stdout.strip()
+
+        rc = proc.poll()
+        if rc is not None:
+            stdout, _ = proc.communicate()
+            return rc, stdout.strip()
+
+        QtCore.QThread.msleep(max(1, int(poll_interval_sec * 1000)))
 
 
 def format_command(args: list[str]) -> str:
@@ -256,6 +307,420 @@ def is_target_video_device(name: str, pnp_device_id: str) -> bool:
     return vendor_match and not any(token in text for token in virtual_tokens)
 
 
+def query_registry_dword(key_path: str, value_name: str, cancel_requested: Callable[[], bool] | None = None) -> int | None:
+    _, output = run_command_with_options(
+        ["reg", "query", key_path, "/v", value_name],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    return parse_registry_int(parse_registry_value(output))
+
+
+def query_power_setting_indices(
+    subgroup_guid: str,
+    setting_guid: str,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> tuple[int | None, int | None]:
+    _, output = run_command_with_options(
+        ["powercfg", "/query", "scheme_current", subgroup_guid, setting_guid],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    return parse_powercfg_indices(output)
+
+
+def format_power_dual_status(
+    label: str,
+    subgroup_guid: str,
+    setting_guid: str,
+    expected_ac: int,
+    expected_dc: int,
+    value_formatter: Callable[[int], str],
+    cancel_requested: Callable[[], bool] | None = None,
+) -> str:
+    ac_value, dc_value = query_power_setting_indices(subgroup_guid, setting_guid, cancel_requested)
+    if ac_value is None or dc_value is None:
+        return format_status_line(label, "Unable to query", False)
+
+    ok = ac_value == expected_ac and dc_value == expected_dc
+    if ac_value == dc_value:
+        current_value = value_formatter(ac_value)
+        expected_value = value_formatter(expected_ac)
+        display = current_value if ok else f"{current_value} (expected {expected_value})"
+        return format_status_line(label, display, ok)
+
+    display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
+    if not ok:
+        expected_display = f"AC={value_formatter(expected_ac)}, DC={value_formatter(expected_dc)}"
+        display = f"{display} (expected {expected_display})"
+    return format_status_line(label, display, ok)
+
+
+def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], bool] | None = None) -> list[str]:
+    lines: list[str] = []
+
+    _, active_plan_out = run_command_with_options(
+        ["powercfg", "/getactivescheme"],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    active_plan = parse_active_power_plan(active_plan_out)
+    high_perf_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    active_line = compact_single_line(active_plan_out).lower()
+    active_ok = high_perf_guid in active_line or "high performance" in active_line
+    lines.append(format_status_line("Active power plan", active_plan, active_ok))
+
+    lines.append(
+        format_power_dual_status(
+            "Sleep timeout",
+            "SUB_SLEEP",
+            "STANDBYIDLE",
+            expected_ac=0,
+            expected_dc=0,
+            value_formatter=readable_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+    )
+    lines.append(
+        format_power_dual_status(
+            "Hibernate timeout",
+            "SUB_SLEEP",
+            "HIBERNATEIDLE",
+            expected_ac=0,
+            expected_dc=0,
+            value_formatter=readable_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+    )
+    lines.append(
+        format_power_dual_status(
+            "Disk timeout",
+            "SUB_DISK",
+            "DISKIDLE",
+            expected_ac=0,
+            expected_dc=0,
+            value_formatter=readable_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+    )
+    lines.append(
+        format_power_dual_status(
+            "Monitor timeout",
+            "SUB_VIDEO",
+            "VIDEOIDLE",
+            expected_ac=1800,
+            expected_dc=1800,
+            value_formatter=readable_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
+    )
+
+    usb_suspend = query_power_setting_indices(
+        "2a737441-1930-4402-8d77-b2bebba308a3",
+        "48e6b7a6-50f5-4782-a5d4-53bb8f07e226",
+        cancel_requested,
+    )
+    if usb_suspend[0] is None or usb_suspend[1] is None:
+        lines.append(format_status_line("USB selective suspend", "Unable to query", False))
+    else:
+        usb_ok = usb_suspend[0] == 0 and usb_suspend[1] == 0
+        lines.append(format_status_line("USB selective suspend", f"AC={usb_suspend[0]}, DC={usb_suspend[1]}", usb_ok))
+
+    fast_startup = query_registry_dword(
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
+        "HiberbootEnabled",
+        cancel_requested,
+    )
+    if fast_startup is None:
+        lines.append(format_status_line("Fast Startup", "Unable to query", False))
+    else:
+        lines.append(format_status_line("Fast Startup", "Disabled" if fast_startup == 0 else "Enabled", fast_startup == 0))
+
+    game_dvr = query_registry_dword("HKCU\\System\\GameConfigStore", "GameDVR_Enabled", cancel_requested)
+    app_capture = query_registry_dword(
+        "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR",
+        "AppCaptureEnabled",
+        cancel_requested,
+    )
+    allow_game_dvr = query_registry_dword(
+        "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
+        "AllowGameDVR",
+        cancel_requested,
+    )
+    game_dvr_ok = game_dvr == 0 and app_capture == 0 and allow_game_dvr == 0
+    if game_dvr is None or app_capture is None or allow_game_dvr is None:
+        lines.append(format_status_line("Game DVR", "Unable to query", False))
+    else:
+        lines.append(
+            format_status_line(
+                "Game DVR",
+                f"GameDVR_Enabled={game_dvr}, AppCaptureEnabled={app_capture}, AllowGameDVR={allow_game_dvr}",
+                game_dvr_ok,
+            )
+        )
+
+    visual_fx = query_registry_dword(
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+        "VisualFXSetting",
+        cancel_requested,
+    )
+    if visual_fx is None:
+        lines.append(format_status_line("Visual effects", "Unable to query", False))
+    else:
+        visual_fx_value = "Best performance" if visual_fx == 2 else f"Custom ({visual_fx})"
+        lines.append(format_status_line("Visual effects", visual_fx_value, visual_fx == 2))
+
+    thumbnails = query_registry_dword(
+        "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+        "IconsOnly",
+        cancel_requested,
+    )
+    if thumbnails is None:
+        lines.append(format_status_line("Thumbnail previews", "Unable to query", False))
+    else:
+        lines.append(format_status_line("Thumbnail previews", "Enabled" if thumbnails == 0 else "Disabled", thumbnails == 0))
+
+    toast_enabled = query_registry_dword(
+        "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications",
+        "ToastEnabled",
+        cancel_requested,
+    )
+    if toast_enabled is None:
+        lines.append(format_status_line("Toast notifications", "Unable to query", False))
+    else:
+        lines.append(format_status_line("Toast notifications", "Disabled" if toast_enabled == 0 else "Enabled", toast_enabled == 0))
+
+    notification_center = query_registry_dword(
+        "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+        "DisableNotificationCenter",
+        cancel_requested,
+    )
+    if notification_center is None:
+        lines.append(format_status_line("Notification Center", "Unable to query", False))
+    else:
+        lines.append(
+            format_status_line(
+                "Notification Center",
+                "Disabled" if notification_center == 1 else "Enabled",
+                notification_center == 1,
+            )
+        )
+
+    if rename_target:
+        current_name = os.environ.get("COMPUTERNAME", "Unknown")
+        lines.append(
+            format_status_line(
+                "Rename computer",
+                f"Current={current_name}, Target={rename_target}",
+                current_name.lower() == rename_target.lower(),
+            )
+        )
+    return lines
+
+
+class SetupWorker(QtCore.QObject):
+    log_line = QtCore.pyqtSignal(str)
+    step_started = QtCore.pyqtSignal(str)
+    step_finished = QtCore.pyqtSignal(str, bool)
+    completed = QtCore.pyqtSignal(bool, str)
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        rename_target: str = "",
+        apply_steps: Sequence[ExecutionStep] | None = None,
+        app_steps: Sequence[ExecutionStep] | None = None,
+    ) -> None:
+        super().__init__()
+        self._mode = mode
+        self._rename_target = rename_target
+        self._apply_steps = list(apply_steps or [])
+        self._app_steps = list(app_steps or [])
+        self._cancel_requested = False
+
+    @QtCore.pyqtSlot()
+    def request_cancel(self) -> None:
+        self._cancel_requested = True
+
+    def _cancelled(self) -> bool:
+        return self._cancel_requested
+
+    @QtCore.pyqtSlot()
+    def run(self) -> None:
+        try:
+            if self._mode == "inspect":
+                self._run_inspect()
+            else:
+                self._run_apply()
+        except Exception as exc:  # safeguard background thread
+            self.log_line.emit(f"[ERROR] Unexpected failure: {exc}")
+            self.completed.emit(False, "failed")
+
+    def _run_inspect(self) -> None:
+        self.log_line.emit("=" * 60)
+        self.log_line.emit(f"{APP_NAME} - INSPECT REPORT")
+        self.log_line.emit("=" * 60)
+        self.log_line.emit(format_kv_line("Time", datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        self.log_line.emit(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
+        self.log_line.emit("")
+
+        self.step_started.emit("APPLY option status")
+        for line in build_apply_status_lines(self._rename_target, self._cancelled):
+            self.log_line.emit(line)
+        self.step_finished.emit("APPLY option status", True)
+        self.log_line.emit("")
+
+        if self._cancelled():
+            self.completed.emit(False, "cancelled")
+            return
+
+        if not is_windows():
+            self.log_line.emit("[ERROR] This tool is intended for Windows.")
+            self.completed.emit(False, "failed")
+            return
+
+        self.step_started.emit("System")
+        code, os_name = run_command_with_options(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Caption"], timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        _, os_ver = run_command_with_options(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Version"], timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        _, os_build = run_command_with_options(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).BuildNumber"], timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        _, os_ubr = run_command_with_options(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "UBR"], timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        _, os_display = run_command_with_options(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "DisplayVersion"], timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        if code == 0:
+            self.log_line.emit("System")
+            self.log_line.emit("-" * 60)
+            self.log_line.emit(format_kv_line("OS", compact_single_line(os_name)))
+            self.log_line.emit(format_kv_line("Version", compact_single_line(os_ver)))
+            self.log_line.emit(format_kv_line("Build", compact_single_line(os_build)))
+            ubr_value = parse_registry_int(parse_registry_value(os_ubr))
+            display_value = parse_registry_value(os_display)
+            if display_value:
+                self.log_line.emit(format_kv_line("Release", display_value))
+            if ubr_value is not None:
+                current_full_build = f"{compact_single_line(os_build)}.{ubr_value}"
+                self.log_line.emit(format_kv_line("Full build", current_full_build))
+        else:
+            self.log_line.emit(format_kv_line("OS", "unable to query"))
+        self.log_line.emit(format_kv_line("Admin", 'YES' if is_admin() else 'NO'))
+        self.step_finished.emit("System", code == 0)
+        self.log_line.emit("")
+
+        if self._cancelled():
+            self.completed.emit(False, "cancelled")
+            return
+
+        self.step_started.emit("Target video cards")
+        self.log_line.emit("Target video cards (NVIDIA / AMD / Blackmagic)")
+        self.log_line.emit("-" * 60)
+        gpu_cmd = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress",
+        ]
+        _, gpu_out = run_command_with_options(gpu_cmd, timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC, cancel_requested=self._cancelled)
+        gpus = [gpu for gpu in parse_json_payload(gpu_out) if is_target_video_device(str(gpu.get("Name", "")), str(gpu.get("PNPDeviceID", "")))]
+        if gpus:
+            self.log_line.emit(format_kv_line("Found", f"{len(gpus)} matching device(s)"))
+            for gpu in gpus:
+                name = str(gpu.get("Name", "Unknown")).strip() or "Unknown"
+                version = str(gpu.get("DriverVersion", "Unknown")).strip() or "Unknown"
+                date = format_driver_date(str(gpu.get("DriverDate", "")))
+                vendor = guess_gpu_vendor(name)
+                lookup = get_vendor_driver_lookup_hint(vendor)
+                self.log_line.emit(format_kv_line("GPU", name))
+                self.log_line.emit(format_kv_line("  Driver", version))
+                self.log_line.emit(format_kv_line("  Date", date))
+                self.log_line.emit(format_kv_line("  Latest", f"check {vendor} site -> {lookup}"))
+        else:
+            self.log_line.emit(format_kv_line("GPU", "No NVIDIA/AMD/Blackmagic video card detected"))
+        self.log_line.emit("")
+        self.step_finished.emit("Target video cards", True)
+        self.completed.emit(True, "done")
+
+    def _run_apply(self) -> None:
+        self.log_line.emit("=== DXM PC Setup (APPLY) ===")
+        self.log_line.emit(format_kv_line("Time", datetime.now().strftime('%Y%m%d_%H%M%S')))
+        self.log_line.emit(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
+        self.log_line.emit("")
+
+        if not is_windows():
+            self.log_line.emit("[ERROR] This tool is intended for Windows.")
+            self.completed.emit(False, "failed")
+            return
+        if not is_admin():
+            self.log_line.emit("[ERROR] Please run this script as Administrator for APPLY mode.")
+            self.completed.emit(False, "failed")
+            return
+
+        if not self._apply_steps and not self._app_steps:
+            self.log_line.emit("No APPLY options or application installs selected.")
+            self.completed.emit(False, "failed")
+            return
+
+        for idx, step in enumerate(self._apply_steps, start=1):
+            if self._cancelled():
+                self.completed.emit(False, "cancelled")
+                return
+
+            step_name = f"[{idx}/{len(self._apply_steps)}] {step.label}"
+            self.step_started.emit(step_name)
+            self.log_line.emit(step_name)
+            ok = True
+            for cmd in step.commands:
+                rc, out = run_command_with_options(cmd, timeout_sec=DEFAULT_APPLY_TIMEOUT_SEC, cancel_requested=self._cancelled)
+                self.log_line.emit(f"  $ {format_command(cmd)}")
+                if rc == COMMAND_CANCEL_EXIT_CODE:
+                    self.log_line.emit("    -> CANCELLED")
+                    self.step_finished.emit(step_name, False)
+                    self.completed.emit(False, "cancelled")
+                    return
+                if rc == COMMAND_TIMEOUT_EXIT_CODE:
+                    ok = False
+                    self.log_line.emit(f"    -> FAIL (timeout after {DEFAULT_APPLY_TIMEOUT_SEC}s)")
+                else:
+                    ok = ok and rc == 0
+                    status = "OK" if rc == 0 else f"FAIL (exit {rc})"
+                    self.log_line.emit(f"    -> {status}")
+                if out:
+                    self.log_line.emit(f"    {out}")
+            self.log_line.emit("")
+            self.step_finished.emit(step_name, ok)
+
+        if self._app_steps:
+            self.log_line.emit("Applications installation")
+            self.log_line.emit("-" * 30)
+            for idx, step in enumerate(self._app_steps, start=1):
+                if self._cancelled():
+                    self.completed.emit(False, "cancelled")
+                    return
+
+                step_name = f"[{idx}/{len(self._app_steps)}] {step.label}"
+                self.step_started.emit(step_name)
+                self.log_line.emit(step_name)
+                cmd = step.commands[0]
+                rc, out = run_command_with_options(cmd, timeout_sec=DEFAULT_INSTALL_TIMEOUT_SEC, cancel_requested=self._cancelled)
+                self.log_line.emit(f"  $ {format_command(cmd)}")
+                if rc == COMMAND_CANCEL_EXIT_CODE:
+                    self.log_line.emit("    -> CANCELLED")
+                    self.step_finished.emit(step_name, False)
+                    self.completed.emit(False, "cancelled")
+                    return
+                if rc == COMMAND_TIMEOUT_EXIT_CODE:
+                    self.log_line.emit(f"    -> FAIL (timeout after {DEFAULT_INSTALL_TIMEOUT_SEC}s)")
+                    self.step_finished.emit(step_name, False)
+                else:
+                    status = "OK" if rc == 0 else f"FAIL (exit {rc})"
+                    self.log_line.emit(f"    -> {status}")
+                    self.step_finished.emit(step_name, rc == 0)
+                if out:
+                    self.log_line.emit(f"    {out}")
+                self.log_line.emit("")
+
+        self.log_line.emit("DONE. Reboot is recommended (required if computer rename was applied).")
+        self.completed.emit(True, "done")
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -268,6 +733,8 @@ class MainWindow(QtWidgets.QWidget):
         self.inspect_button = QtWidgets.QPushButton("Inspect")
         self.run_button = QtWidgets.QPushButton("Run")
         self.clear_button = QtWidgets.QPushButton("Clear Output")
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        self.cancel_button.setEnabled(False)
         self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
 
         self.output = QtWidgets.QPlainTextEdit()
@@ -318,6 +785,7 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
+        btn_row.addWidget(self.cancel_button)
 
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.addStretch(1)
@@ -339,7 +807,11 @@ class MainWindow(QtWidgets.QWidget):
         self.inspect_button.clicked.connect(self._run_inspect)
         self.run_button.clicked.connect(self._run_apply)
         self.clear_button.clicked.connect(self.output.clear)
+        self.cancel_button.clicked.connect(self._request_cancel)
         self.save_report_button.clicked.connect(self._save_report_txt)
+
+        self._worker_thread: QtCore.QThread | None = None
+        self._worker: SetupWorker | None = None
 
     def _save_report_txt(self) -> None:
         report_content = self.output.toPlainText().strip()
@@ -480,316 +952,106 @@ class MainWindow(QtWidgets.QWidget):
         for cb in self.app_checkboxes.values():
             cb.setChecked(checked)
 
+    def _set_execution_state(self, running: bool) -> None:
+        self.inspect_button.setEnabled(not running)
+        self.run_button.setEnabled(not running)
+        self.cancel_button.setEnabled(running)
+        self.select_all_checkbox.setEnabled(not running)
+        self.tasks_group.setEnabled(not running)
+        self.apps_group.setEnabled(not running)
+        self.save_report_button.setEnabled(not running)
+
+    def _start_worker(self, worker: SetupWorker) -> None:
+        self._worker_thread = QtCore.QThread(self)
+        self._worker = worker
+        self._worker.moveToThread(self._worker_thread)
+
+        worker.log_line.connect(self._append)
+        worker.step_started.connect(lambda name: self._append(f"[STEP START] {name}"))
+        worker.step_finished.connect(lambda name, ok: self._append(f"[STEP END] {name} -> {'OK' if ok else 'FAIL'}"))
+        worker.completed.connect(self._on_worker_completed)
+
+        self._worker_thread.started.connect(worker.run)
+        worker.completed.connect(self._worker_thread.quit)
+        worker.completed.connect(worker.deleteLater)
+        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+
+        self._set_execution_state(True)
+        self._worker_thread.start()
+
+    def _request_cancel(self) -> None:
+        if not hasattr(self, '_worker') or self._worker is None:
+            return
+        self._append('[INFO] Cancel requested. Stopping after current command...')
+        self._worker.request_cancel()
+        self.cancel_button.setEnabled(False)
+
+    def _on_worker_completed(self, success: bool, reason: str) -> None:
+        if reason == 'cancelled':
+            self._append('[INFO] Operation cancelled.')
+        elif not success:
+            self._append('[INFO] Operation finished with errors.')
+        self._set_execution_state(False)
+        self._worker = None
+        self._worker_thread = None
+
     def _run_inspect(self) -> None:
-        self.inspect_button.setEnabled(False)
-        self.run_button.setEnabled(False)
-        try:
-            self.run_inspect()
-        finally:
-            self.inspect_button.setEnabled(True)
-            self.run_button.setEnabled(True)
+        worker = SetupWorker(mode='inspect', rename_target=self.rename_input.text().strip())
+        self._start_worker(worker)
+
+    def _build_apply_execution_plan(self) -> tuple[list[ExecutionStep], list[ExecutionStep]] | None:
+        selected_steps: list[ExecutionStep] = []
+        rename_requested = self.task_checkboxes['rename_pc'].isChecked()
+        rename_name = self.rename_input.text().strip()
+
+        for task in self.apply_tasks:
+            if not self.task_checkboxes[task.key].isChecked():
+                continue
+            if task.key == 'rename_pc' and not rename_name:
+                self._append('Rename computer step skipped (name is empty).')
+                self._append()
+                continue
+            commands = task.action()
+            if task.key == 'rename_pc' and rename_requested and rename_name and not commands:
+                return None
+            if commands:
+                selected_steps.append(ExecutionStep(label=task.label, commands=commands))
+
+        selected_apps = [a for a in self.install_apps if self.app_checkboxes[a.key].isChecked()]
+        app_steps: list[ExecutionStep] = []
+        for app in selected_apps:
+            cmd = [
+                'winget',
+                'install',
+                '--id',
+                app.winget_id,
+                '-e',
+                '--silent',
+                '--disable-interactivity',
+                '--accept-package-agreements',
+                '--accept-source-agreements',
+            ]
+            app_steps.append(ExecutionStep(label=app.label, commands=[cmd]))
+
+        return selected_steps, app_steps
 
     def _run_apply(self) -> None:
-        self.inspect_button.setEnabled(False)
-        self.run_button.setEnabled(False)
-        try:
-            self.run_apply()
-        finally:
-            self.inspect_button.setEnabled(True)
-            self.run_button.setEnabled(True)
-
-    def run_inspect(self) -> None:
-        self._append("=" * 60)
-        self._append(f"{APP_NAME} - INSPECT REPORT")
-        self._append("=" * 60)
-        self._append(format_kv_line("Time", datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
-        self._append(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
-        self._append()
-        self._append("APPLY option status")
-        self._append("-" * 60)
-        for line in self._build_apply_status_lines():
-            self._append(line)
-        self._append()
-
-        if not is_windows():
-            self._append("[ERROR] This tool is intended for Windows.")
+        plan = self._build_apply_execution_plan()
+        if plan is None:
             return
 
-        code, os_name = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Caption"])
-        _, os_ver = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Version"])
-        _, os_build = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).BuildNumber"])
-        _, os_ubr = run_command(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "UBR"])
-        _, os_display = run_command(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "DisplayVersion"])
-        if code == 0:
-            self._append("System")
-            self._append("-" * 60)
-            self._append(format_kv_line("OS", compact_single_line(os_name)))
-            self._append(format_kv_line("Version", compact_single_line(os_ver)))
-            self._append(format_kv_line("Build", compact_single_line(os_build)))
-            ubr_value = parse_registry_int(parse_registry_value(os_ubr))
-            display_value = parse_registry_value(os_display)
-            if display_value:
-                self._append(format_kv_line("Release", display_value))
-            current_full_build = "Unknown"
-            if ubr_value is not None:
-                current_full_build = f"{compact_single_line(os_build)}.{ubr_value}"
-                self._append(format_kv_line("Full build", current_full_build))
-        else:
-            self._append(format_kv_line("OS", "unable to query"))
-        self._append(format_kv_line("Admin", 'YES' if is_admin() else 'NO'))
-        self._append()
-
-        self._append("Target video cards (NVIDIA / AMD / Blackmagic)")
-        self._append("-" * 60)
-        gpu_cmd = [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress",
-        ]
-        _, gpu_out = run_command(gpu_cmd)
-        gpus = [gpu for gpu in parse_json_payload(gpu_out) if is_target_video_device(str(gpu.get("Name", "")), str(gpu.get("PNPDeviceID", "")))]
-        if gpus:
-            self._append(format_kv_line("Found", f"{len(gpus)} matching device(s)"))
-            for gpu in gpus:
-                name = str(gpu.get("Name", "Unknown")).strip() or "Unknown"
-                version = str(gpu.get("DriverVersion", "Unknown")).strip() or "Unknown"
-                date = format_driver_date(str(gpu.get("DriverDate", "")))
-                vendor = guess_gpu_vendor(name)
-                lookup = get_vendor_driver_lookup_hint(vendor)
-                self._append(format_kv_line("GPU", name))
-                self._append(format_kv_line("  Driver", version))
-                self._append(format_kv_line("  Date", date))
-                self._append(format_kv_line("  Latest", f"check {vendor} site -> {lookup}"))
-        else:
-            self._append(format_kv_line("GPU", "No NVIDIA/AMD/Blackmagic video card detected"))
-        self._append()
-
-
-    def _query_registry_dword(self, key_path: str, value_name: str) -> int | None:
-        _, output = run_command(["reg", "query", key_path, "/v", value_name])
-        return parse_registry_int(parse_registry_value(output))
-
-    def _query_power_setting_indices(self, subgroup_guid: str, setting_guid: str) -> tuple[int | None, int | None]:
-        _, output = run_command(["powercfg", "/query", "scheme_current", subgroup_guid, setting_guid])
-        return parse_powercfg_indices(output)
-
-    def _format_power_dual_status(
-        self,
-        label: str,
-        subgroup_guid: str,
-        setting_guid: str,
-        expected_ac: int,
-        expected_dc: int,
-        value_formatter: Callable[[int], str],
-    ) -> str:
-        ac_value, dc_value = self._query_power_setting_indices(subgroup_guid, setting_guid)
-        if ac_value is None or dc_value is None:
-            return format_status_line(label, "Unable to query", False)
-
-        ok = ac_value == expected_ac and dc_value == expected_dc
-        if ac_value == dc_value:
-            current_value = value_formatter(ac_value)
-            expected_value = value_formatter(expected_ac)
-            display = current_value if ok else f"{current_value} (expected {expected_value})"
-            return format_status_line(label, display, ok)
-
-        display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
-        if not ok:
-            expected_display = f"AC={value_formatter(expected_ac)}, DC={value_formatter(expected_dc)}"
-            display = f"{display} (expected {expected_display})"
-        return format_status_line(label, display, ok)
-
-    def _build_apply_status_lines(self) -> list[str]:
-        lines: list[str] = []
-
-        _, active_plan_out = run_command(["powercfg", "/getactivescheme"])
-        active_plan = parse_active_power_plan(active_plan_out)
-        high_perf_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
-        active_line = compact_single_line(active_plan_out).lower()
-        active_ok = high_perf_guid in active_line or "high performance" in active_line
-        lines.append(format_status_line("Active power plan", active_plan, active_ok))
-
-        lines.append(
-            self._format_power_dual_status(
-                "Sleep timeout",
-                "SUB_SLEEP",
-                "STANDBYIDLE",
-                expected_ac=0,
-                expected_dc=0,
-                value_formatter=readable_timeout_seconds,
-            )
-        )
-        lines.append(
-            self._format_power_dual_status(
-                "Hibernate timeout",
-                "SUB_SLEEP",
-                "HIBERNATEIDLE",
-                expected_ac=0,
-                expected_dc=0,
-                value_formatter=readable_timeout_seconds,
-            )
-        )
-        lines.append(
-            self._format_power_dual_status(
-                "Disk timeout",
-                "SUB_DISK",
-                "DISKIDLE",
-                expected_ac=0,
-                expected_dc=0,
-                value_formatter=readable_timeout_seconds,
-            )
-        )
-        lines.append(
-            self._format_power_dual_status(
-                "Monitor timeout",
-                "SUB_VIDEO",
-                "VIDEOIDLE",
-                expected_ac=1800,
-                expected_dc=1800,
-                value_formatter=readable_timeout_seconds,
-            )
-        )
-        lines.append(
-            self._format_power_dual_status(
-                "USB selective suspend",
-                "2a737441-1930-4402-8d77-b2bebba308a3",
-                "48e6b7a6-50f5-4782-a5d4-53bb8f07e226",
-                expected_ac=0,
-                expected_dc=0,
-                value_formatter=lambda value: "Disabled" if value == 0 else f"Enabled ({value})",
-            )
-        )
-
-        fast_startup = self._query_registry_dword(
-            "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
-            "HiberbootEnabled",
-        )
-        if fast_startup is None:
-            lines.append(format_status_line("Fast Startup", "Unable to query", False))
-        else:
-            lines.append(format_status_line("Fast Startup", "Disabled" if fast_startup == 0 else "Enabled", fast_startup == 0))
-
-        game_dvr_policy = self._query_registry_dword(
-            "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
-            "AllowGameDVR",
-        )
-        if game_dvr_policy is None:
-            lines.append(format_status_line("Policy: AllowGameDVR", "Unable to query", False))
-        else:
-            policy_value = "Disabled" if game_dvr_policy == 0 else "Enabled"
-            lines.append(format_status_line("Policy: AllowGameDVR", policy_value, game_dvr_policy == 0))
-
-        visual_fx = self._query_registry_dword(
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
-            "VisualFXSetting",
-        )
-        if visual_fx is None:
-            lines.append(format_status_line("Visual effects", "Unable to query", False))
-        else:
-            visual_fx_value = "Best performance" if visual_fx == 2 else f"Custom ({visual_fx})"
-            lines.append(format_status_line("Visual effects", visual_fx_value, visual_fx == 2))
-
-        thumbnails = self._query_registry_dword(
-            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
-            "IconsOnly",
-        )
-        if thumbnails is None:
-            lines.append(format_status_line("Thumbnail previews", "Unable to query", False))
-        else:
-            lines.append(format_status_line("Thumbnail previews", "Enabled" if thumbnails == 0 else "Disabled", thumbnails == 0))
-
-        toast_enabled = self._query_registry_dword(
-            "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications",
-            "ToastEnabled",
-        )
-        if toast_enabled is None:
-            lines.append(format_status_line("Toast notifications", "Unable to query", False))
-        else:
-            lines.append(format_status_line("Toast notifications", "Disabled" if toast_enabled == 0 else "Enabled", toast_enabled == 0))
-
-        notification_center = self._query_registry_dword(
-            "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
-            "DisableNotificationCenter",
-        )
-        if notification_center is None:
-            lines.append(format_status_line("Notification Center", "Unable to query", False))
-        else:
-            lines.append(
-                format_status_line(
-                    "Notification Center",
-                    "Disabled" if notification_center == 1 else "Enabled",
-                    notification_center == 1,
-                )
-            )
-
-        target_name = self.rename_input.text().strip()
-        if target_name:
-            current_name = os.environ.get("COMPUTERNAME", "Unknown")
-            lines.append(format_status_line("Rename computer", f"Current={current_name}, Target={target_name}", current_name.lower() == target_name.lower()))
-        return lines
-
-    def run_apply(self) -> None:
-        self._append("=== DXM PC Setup (APPLY) ===")
-        self._append(format_kv_line("Time", datetime.now().strftime('%Y%m%d_%H%M%S')))
-        self._append(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
-        self._append()
-
-        if not is_windows():
-            self._append("[ERROR] This tool is intended for Windows.")
-            return
-        if not is_admin():
-            self._append("[ERROR] Please run this script as Administrator for APPLY mode.")
+        selected_steps, app_steps = plan
+        if not selected_steps and not app_steps:
+            self._append('No APPLY options or application installs selected.')
             return
 
-        selected = [t for t in self.apply_tasks if self.task_checkboxes[t.key].isChecked()]
-        selected_apps = [a for a in self.install_apps if self.app_checkboxes[a.key].isChecked()]
-        if self.task_checkboxes["rename_pc"].isChecked() and not self.rename_input.text().strip():
-            selected = [t for t in selected if t.key != "rename_pc"]
-            self._append("Rename computer step skipped (name is empty).")
-            self._append()
-
-        if not selected and not selected_apps:
-            self._append("No APPLY options or application installs selected.")
-            return
-
-        total = len(selected)
-        for idx, task in enumerate(selected, start=1):
-            self._append(f"[{idx}/{total}] {task.label}")
-            for cmd in task.action():
-                rc, out = run_command(cmd)
-                status = "OK" if rc == 0 else f"FAIL (exit {rc})"
-                self._append(f"  $ {format_command(cmd)}")
-                self._append(f"    -> {status}")
-                if out:
-                    self._append(f"    {out}")
-            self._append()
-
-        if selected_apps:
-            self._append("Applications installation")
-            self._append("-" * 30)
-            for idx, app in enumerate(selected_apps, start=1):
-                cmd = [
-                    "winget",
-                    "install",
-                    "--id",
-                    app.winget_id,
-                    "-e",
-                    "--silent",
-                    "--disable-interactivity",
-                    "--accept-package-agreements",
-                    "--accept-source-agreements",
-                ]
-                self._append(f"[{idx}/{len(selected_apps)}] {app.label}")
-                rc, out = run_command(cmd)
-                status = "OK" if rc == 0 else f"FAIL (exit {rc})"
-                self._append(f"  $ {format_command(cmd)}")
-                self._append(f"    -> {status}")
-                if out:
-                    self._append(f"    {out}")
-                self._append()
-
-        self._append("DONE. Reboot is recommended (required if computer rename was applied).")
+        worker = SetupWorker(
+            mode='apply',
+            rename_target=self.rename_input.text().strip(),
+            apply_steps=selected_steps,
+            app_steps=app_steps,
+        )
+        self._start_worker(worker)
 
     def _rename_computer_action(self) -> list[list[str]]:
         new_name = self.rename_input.text().strip()
