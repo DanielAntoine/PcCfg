@@ -26,6 +26,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
+CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_log.json")
 
 
 INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
@@ -963,6 +964,7 @@ class MainWindow(QtWidgets.QWidget):
         self.inspect_button = QtWidgets.QPushButton("Inspect")
         self.run_button = QtWidgets.QPushButton("Run")
         self.clear_button = QtWidgets.QPushButton("Clear Output")
+        self.new_install_button = QtWidgets.QPushButton("New install")
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
@@ -1053,6 +1055,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
+        self._is_loading_checklist_state = False
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
         for section_label, section_items in INSTALLATION_PC_CHECKLIST:
             section_header = QtWidgets.QTreeWidgetItem([section_label])
@@ -1070,7 +1073,8 @@ class MainWindow(QtWidgets.QWidget):
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
                 self.installation_checklist_items.append(checklist_item)
 
-        self.installation_checklist_tree.itemChanged.connect(self._update_installation_checklist_progress)
+        self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
+        self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(460)
 
@@ -1078,6 +1082,7 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
+        btn_row.addWidget(self.new_install_button)
         btn_row.addWidget(self.cancel_button)
 
         bottom_row = QtWidgets.QHBoxLayout()
@@ -1105,16 +1110,77 @@ class MainWindow(QtWidgets.QWidget):
         self.inspect_button.clicked.connect(self._run_inspect)
         self.run_button.clicked.connect(self._run_apply)
         self.clear_button.clicked.connect(self.output.clear)
+        self.new_install_button.clicked.connect(self._start_new_install)
         self.cancel_button.clicked.connect(self._request_cancel)
         self.save_report_button.clicked.connect(self._save_report_txt)
 
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
 
-    def _update_installation_checklist_progress(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
+    def _on_installation_checklist_item_changed(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
+        self._update_installation_checklist_progress()
+        if self._is_loading_checklist_state:
+            return
+        self._save_installation_checklist_state()
+
+    def _update_installation_checklist_progress(self) -> None:
         total = len(self.installation_checklist_items)
         done = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
         self.installation_checklist_progress.setText(f"{done}/{total} completed")
+
+    def _save_installation_checklist_state(self) -> None:
+        checklist_state = {
+            item.text(0): item.checkState(0) == QtCore.Qt.Checked
+            for item in self.installation_checklist_items
+        }
+        payload = {
+            "updated_at": datetime.now().isoformat(),
+            "items": checklist_state,
+        }
+        CHECKLIST_LOG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _load_installation_checklist_state(self) -> None:
+        if not CHECKLIST_LOG_FILE.exists():
+            return
+
+        try:
+            payload = json.loads(CHECKLIST_LOG_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return
+
+        persisted_items = payload.get("items")
+        if not isinstance(persisted_items, dict):
+            return
+
+        self._is_loading_checklist_state = True
+        try:
+            for item in self.installation_checklist_items:
+                checked = bool(persisted_items.get(item.text(0), False))
+                item.setCheckState(0, QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+        finally:
+            self._is_loading_checklist_state = False
+
+    def _start_new_install(self) -> None:
+        self._is_loading_checklist_state = True
+        try:
+            for item in self.installation_checklist_items:
+                item.setCheckState(0, QtCore.Qt.Unchecked)
+        finally:
+            self._is_loading_checklist_state = False
+
+        self._update_installation_checklist_progress()
+
+        try:
+            CHECKLIST_LOG_FILE.unlink(missing_ok=True)
+        except OSError as exc:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "New install",
+                f"Could not remove checklist log file:\n{exc}",
+            )
+            return
+
+        self._append("[INFO] New install started: checklist reset and log cleared.")
 
     def _save_report_txt(self) -> None:
         report_content = self.output.toPlainText().strip()
