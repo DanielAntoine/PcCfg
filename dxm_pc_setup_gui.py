@@ -28,6 +28,21 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_log.json")
 
+CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
+    "Client name": "text",
+    "Computer role": "text",
+    "2-letter suffix (first 2 letters of the role)": "text",
+    "Numbering00 (e.g., 01, 02, 03)": "text",
+    "Hostname/User: {ClientName}-{suffix2L}-{numbering00}": "text",
+    "Inventory ID": "text",
+    "Technician": "text",
+    "Date": "date",
+    "Installed cards: BMD / 10GbE / others": "text",
+    "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg": "text",
+    "Validation: Device Manager = 0 unknown devices": "text",
+    "Record ScreenConnect ID": "text",
+}
+
 
 INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
     (
@@ -1045,20 +1060,23 @@ class MainWindow(QtWidgets.QWidget):
 
         self.installation_checklist_tree = QtWidgets.QTreeWidget()
         self.installation_checklist_tree.setObjectName("installationChecklistTree")
-        self.installation_checklist_tree.setColumnCount(1)
-        self.installation_checklist_tree.setHeaderHidden(True)
+        self.installation_checklist_tree.setColumnCount(2)
+        self.installation_checklist_tree.setHeaderLabels(["Task", "Info"])
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setAlternatingRowColors(True)
         self.installation_checklist_tree.setUniformRowHeights(True)
         self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
         self.installation_checklist_tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
         self.installation_checklist_tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+        self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
         self._is_loading_checklist_state = False
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
+        self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
         for section_label, section_items in INSTALLATION_PC_CHECKLIST:
-            section_header = QtWidgets.QTreeWidgetItem([section_label])
+            section_header = QtWidgets.QTreeWidgetItem([section_label, ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
             section_header.setFirstColumnSpanned(True)
             section_font = section_header.font(0)
@@ -1067,11 +1085,29 @@ class MainWindow(QtWidgets.QWidget):
             self.installation_checklist_tree.addTopLevelItem(section_header)
 
             for item_label in section_items:
-                checklist_item = QtWidgets.QTreeWidgetItem([item_label])
+                checklist_item = QtWidgets.QTreeWidgetItem([item_label, ""])
                 checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
                 self.installation_checklist_items.append(checklist_item)
+
+                field_type = CHECKLIST_INFO_FIELD_TYPES.get(item_label)
+                if field_type is None:
+                    continue
+
+                if field_type == "date":
+                    value_input = QtWidgets.QDateEdit()
+                    value_input.setDisplayFormat("yyyy-MM-dd")
+                    value_input.setCalendarPopup(True)
+                    value_input.setDate(QtCore.QDate.currentDate())
+                    value_input.dateChanged.connect(lambda _value: self._save_installation_checklist_state())
+                else:
+                    value_input = QtWidgets.QLineEdit()
+                    value_input.setPlaceholderText("Add details")
+                    value_input.textChanged.connect(lambda _value: self._save_installation_checklist_state())
+
+                self.installation_checklist_tree.setItemWidget(checklist_item, 1, value_input)
+                self.checklist_info_inputs[item_label] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self._load_installation_checklist_state()
@@ -1129,13 +1165,21 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_progress.setText(f"{done}/{total} completed")
 
     def _save_installation_checklist_state(self) -> None:
+        if self._is_loading_checklist_state:
+            return
+
         checklist_state = {
             item.text(0): item.checkState(0) == QtCore.Qt.Checked
             for item in self.installation_checklist_items
         }
+        checklist_info = {
+            key: self._read_checklist_info_value(widget)
+            for key, widget in self.checklist_info_inputs.items()
+        }
         payload = {
             "updated_at": datetime.now().isoformat(),
             "items": checklist_state,
+            "info": checklist_info,
         }
         CHECKLIST_LOG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -1151,12 +1195,18 @@ class MainWindow(QtWidgets.QWidget):
         persisted_items = payload.get("items")
         if not isinstance(persisted_items, dict):
             return
+        persisted_info = payload.get("info")
+        if not isinstance(persisted_info, dict):
+            persisted_info = {}
 
         self._is_loading_checklist_state = True
         try:
             for item in self.installation_checklist_items:
                 checked = bool(persisted_items.get(item.text(0), False))
                 item.setCheckState(0, QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+
+            for key, widget in self.checklist_info_inputs.items():
+                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
         finally:
             self._is_loading_checklist_state = False
 
@@ -1165,6 +1215,8 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 item.setCheckState(0, QtCore.Qt.Unchecked)
+            for widget in self.checklist_info_inputs.values():
+                self._set_checklist_info_value(widget, "")
         finally:
             self._is_loading_checklist_state = False
 
@@ -1213,6 +1265,21 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         self._append(f"[INFO] Report saved to: {selected_path}")
+
+    def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
+        if isinstance(widget, QtWidgets.QLineEdit):
+            return widget.text().strip()
+        if isinstance(widget, QtWidgets.QDateEdit):
+            return widget.date().toString("yyyy-MM-dd")
+        return ""
+
+    def _set_checklist_info_value(self, widget: QtWidgets.QWidget, value: str) -> None:
+        if isinstance(widget, QtWidgets.QLineEdit):
+            widget.setText(value)
+            return
+        if isinstance(widget, QtWidgets.QDateEdit):
+            parsed_date = QtCore.QDate.fromString(value, "yyyy-MM-dd")
+            widget.setDate(parsed_date if parsed_date.isValid() else QtCore.QDate.currentDate())
 
     def _build_tasks(self) -> list[ApplyTask]:
         return [
