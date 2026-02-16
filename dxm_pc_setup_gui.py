@@ -283,7 +283,7 @@ class MainWindow(QtWidgets.QWidget):
             else:
                 self.tasks_layout.addWidget(cb)
 
-        self.apps_group = QtWidgets.QGroupBox("Applications (winget)")
+        self.apps_group = QtWidgets.QGroupBox("Applications")
         self.apps_layout = QtWidgets.QVBoxLayout(self.apps_group)
         current_category: str | None = None
         for app in self.install_apps:
