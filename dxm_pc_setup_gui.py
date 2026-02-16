@@ -119,6 +119,21 @@ def parse_active_power_plan(output: str) -> str:
     return plan_name
 
 
+def parse_registry_int(raw_value: str | None) -> int | None:
+    """Parse a registry DWORD string (hex or decimal) into an int."""
+    if not raw_value:
+        return None
+    token = raw_value.strip().split()[0]
+    try:
+        return int(token, 0)
+    except ValueError:
+        return None
+
+
+def status_tag(is_ok: bool) -> str:
+    return "Ok" if is_ok else "Not Ok"
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -316,9 +331,39 @@ class MainWindow(QtWidgets.QWidget):
             if rc == 0 and out:
                 parsed = parser(out)
                 value = parsed if parsed else compact_single_line(out)
-                self._append(f"- {title:<24}: {value}")
+
+                display_value = value
+                ok = False
+                parsed_int = parse_registry_int(value)
+                lowered_title = title.lower()
+                if title == "Active power plan":
+                    display_value = "High performance" if "high performance" in value.lower() else value
+                    ok = "high performance" in value.lower()
+                elif title == "Fast Startup":
+                    is_disabled = parsed_int == 0
+                    display_value = "Disable" if is_disabled else "Enable"
+                    ok = is_disabled
+                elif "allowgamedvr" in lowered_title:
+                    is_disabled = parsed_int == 0
+                    display_value = "Disable" if is_disabled else "Enable"
+                    ok = is_disabled
+                elif "enabled" in lowered_title or "notifications" in lowered_title:
+                    is_disabled = parsed_int == 0
+                    display_value = "Disable" if is_disabled else "Enable"
+                    ok = is_disabled
+                elif "desktop icon labels" in lowered_title:
+                    show_labels = parsed_int == 0
+                    display_value = "Show" if show_labels else "Hide"
+                    ok = show_labels
+                elif "visual effects" in lowered_title:
+                    display_value = "Best performance" if parsed_int == 2 else value
+                    ok = parsed_int == 2
+                else:
+                    ok = parsed_int is not None
+
+                self._append(f"{title:<24}: {display_value} [{status_tag(ok)}]")
             else:
-                self._append(f"- {title:<24}: Unable to query")
+                self._append(f"{title:<24}: Unable to query [{status_tag(False)}]")
 
     def run_apply(self) -> None:
         self._append("=== DXM PC Setup (APPLY) ===")
