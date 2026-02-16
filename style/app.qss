@@ -228,10 +228,44 @@ QTableView, QTreeView, QListView, QTreeWidget, QTableWidget {
 
 QTreeWidget#installationChecklistTree {
     font-size: 13px;
+    padding: 4px;
 }
 
 QTreeWidget#installationChecklistTree::item {
-    min-height: 24px;
+    min-height: 22px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+
+QTreeWidget#installationChecklistTree::item:selected {
+    background-color: #2a3542;
+}
+
+QLabel#checklistStatusChip {
+    border-radius: 10px;
+    padding: 2px 8px;
+    min-width: 72px;
+    font-weight: 700;
+}
+
+QLabel#checklistStatusChip[chipStatus="PASS"] {
+    background-color: #1f5f3a;
+    color: #c8f7d4;
+}
+
+QLabel#checklistStatusChip[chipStatus="FAIL"] {
+    background-color: #7a2b2b;
+    color: #ffd4d4;
+}
+
+QLabel#checklistStatusChip[chipStatus="PENDING"] {
+    background-color: #545454;
+    color: #f2f2f2;
+}
+
+QLabel#checklistStatusChip[chipStatus="RUNNING"] {
+    background-color: #385b7e;
+    color: #eaf4ff;
 }
 
 QTreeWidget#installationChecklistTree::indicator {
