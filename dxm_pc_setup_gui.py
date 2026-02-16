@@ -21,6 +21,10 @@ from typing import Callable
 from PyQt5 import QtCore, QtWidgets
 
 
+APP_VERSION = "1.0.0"
+APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
+
+
 @dataclass
 class ApplyTask:
     key: str
@@ -66,7 +70,7 @@ def load_stylesheet() -> str:
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DXM - PC Setup (PyQt)")
+        self.setWindowTitle(APP_NAME)
         self.resize(920, 700)
 
         self.select_all_checkbox = QtWidgets.QCheckBox("Select all APPLY options")
@@ -215,7 +219,7 @@ class MainWindow(QtWidgets.QWidget):
             self.run_button.setEnabled(True)
 
     def run_inspect(self) -> None:
-        self._append("=== DXM PC Setup (INSPECT) ===")
+        self._append(f"=== {APP_NAME} (INSPECT) ===")
         self._append(f"Time: {datetime.now().strftime('%Y%m%d_%H%M%S')}")
         self._append(f"Computer: {os.environ.get('COMPUTERNAME', 'Unknown')}")
         self._append()
