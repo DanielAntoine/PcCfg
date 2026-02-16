@@ -55,6 +55,26 @@ def is_admin() -> bool:
         return False
 
 
+def relaunch_as_admin() -> bool:
+    """Relaunch current script with elevation prompt on Windows."""
+    if not is_windows():
+        return False
+
+    params = " ".join([f'"{arg}"' for arg in sys.argv])
+    try:
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None,
+            "runas",
+            sys.executable,
+            params,
+            None,
+            1,
+        )
+        return result > 32
+    except Exception:
+        return False
+
+
 def load_stylesheet() -> str:
     """Load optional Qt stylesheet from ./style/app.qss."""
     stylesheet_path = Path(__file__).resolve().parent / "style" / "app.qss"
@@ -300,6 +320,12 @@ class MainWindow(QtWidgets.QWidget):
 
 
 def main() -> int:
+    if is_windows() and not is_admin():
+        if relaunch_as_admin():
+            return 0
+        print("[ERROR] Administrator privileges are required to start this app.")
+        return 1
+
     app = QtWidgets.QApplication(sys.argv)
     app.setStyleSheet(load_stylesheet())
     window = MainWindow()
