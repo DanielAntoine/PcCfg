@@ -423,7 +423,7 @@ class MainWindow(QtWidgets.QWidget):
     def _build_install_apps(self) -> list[InstallApp]:
         return [
 
-            InstallApp("chrome", "Google Chrome", "Google.Chrome"),
+            InstallApp("chrome", "Google Chrome", "Google.Chrome", "Utilities for creators"),
             InstallApp("davinci_resolve", "DaVinci Resolve", "BlackmagicDesign.DaVinciResolve", "Core video editing / post"),
             InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post"),
             InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post"),
