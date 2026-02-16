@@ -995,6 +995,7 @@ class MainWindow(QtWidgets.QWidget):
         self.run_button = QtWidgets.QPushButton("Run")
         self.clear_button = QtWidgets.QPushButton("Clear Output")
         self.new_install_button = QtWidgets.QPushButton("New install")
+        self.export_installation_report_button = QtWidgets.QPushButton("Export installation report")
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
@@ -1095,6 +1096,11 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_status_bar.setWordWrap(False)
         checklist_group_layout.addWidget(self.checklist_status_bar)
 
+        checklist_buttons_row = QtWidgets.QHBoxLayout()
+        checklist_buttons_row.addWidget(self.new_install_button)
+        checklist_buttons_row.addWidget(self.export_installation_report_button)
+        checklist_group_layout.addLayout(checklist_buttons_row)
+
         self._is_loading_checklist_state = False
         self._is_autofilling_checklist_info = False
         self._last_autofill_values: dict[str, str] = {}
@@ -1158,7 +1164,6 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
-        btn_row.addWidget(self.new_install_button)
         btn_row.addWidget(self.cancel_button)
 
         bottom_row = QtWidgets.QHBoxLayout()
@@ -1187,6 +1192,7 @@ class MainWindow(QtWidgets.QWidget):
         self.run_button.clicked.connect(self._run_apply)
         self.clear_button.clicked.connect(self.output.clear)
         self.new_install_button.clicked.connect(self._start_new_install)
+        self.export_installation_report_button.clicked.connect(self._export_installation_report)
         self.cancel_button.clicked.connect(self._request_cancel)
         self.save_report_button.clicked.connect(self._save_report_txt)
 
@@ -1424,6 +1430,61 @@ class MainWindow(QtWidgets.QWidget):
 
         self._append(f"[INFO] Report saved to: {selected_path}")
 
+    def _export_installation_report(self) -> None:
+        total = len(self.installation_checklist_items)
+        completed = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
+
+        checklist_items_by_label = {
+            str(item.data(0, QtCore.Qt.UserRole)): item
+            for item in self.installation_checklist_items
+        }
+
+        lines: list[str] = [
+            "DXM Installation Report",
+            f"Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Progress: {completed}/{total} completed",
+            "",
+            "Checklist info",
+        ]
+
+        for field_label in CHECKLIST_INFO_FIELD_TYPES:
+            value = self._read_checklist_info_value(self.checklist_info_inputs[field_label])
+            lines.append(f"- {field_label}: {value or '-'}")
+
+        lines.append("")
+        lines.append("Checklist tasks")
+        for section_label, section_items in INSTALLATION_PC_CHECKLIST:
+            lines.append(section_label)
+            for item_label in section_items:
+                item = checklist_items_by_label.get(item_label)
+                if item is None:
+                    continue
+                status = "[x]" if item.checkState(0) == QtCore.Qt.Checked else "[ ]"
+                lines.append(f"  {status} {item_label}")
+            lines.append("")
+
+        default_name = f"installation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        selected_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Export installation report",
+            default_name,
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not selected_path:
+            return
+
+        try:
+            Path(selected_path).write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        except OSError as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Export installation report",
+                f"Failed to export installation report:\n{exc}",
+            )
+            return
+
+        self._append(f"[INFO] Installation report exported to: {selected_path}")
+
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
@@ -1603,6 +1664,8 @@ class MainWindow(QtWidgets.QWidget):
         self.apps_group.setEnabled(not running)
         self.manual_group.setEnabled(not running)
         self.save_report_button.setEnabled(not running)
+        self.new_install_button.setEnabled(not running)
+        self.export_installation_report_button.setEnabled(not running)
 
     def _start_worker(self, worker: SetupWorker) -> None:
         self._worker_thread = QtCore.QThread(self)
