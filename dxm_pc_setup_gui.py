@@ -32,7 +32,7 @@ CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Client name": "text",
     "Computer role": "text",
     "Numbering00 (e.g., 01, 02, 03)": "numbering",
-    "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}": "text",
+    "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}": "text",
     "Inventory ID": "text",
     "Technician": "text",
     "Date": "date",
@@ -45,7 +45,7 @@ CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
 CLIENT_NAME_FIELD = "Client name"
 COMPUTER_ROLE_FIELD = "Computer role"
 NUMBERING_FIELD = "Numbering00 (e.g., 01, 02, 03)"
-HOSTNAME_FIELD = "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}"
+HOSTNAME_FIELD = "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}"
 INVENTORY_ID_FIELD = "Inventory ID"
 DATE_FIELD = "Date"
 FILE_NAME_FIELD = "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg"
@@ -58,7 +58,7 @@ INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
             "Client name",
             "Computer role",
             "Numbering00 (e.g., 01, 02, 03)",
-            "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}",
+            "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}",
             "Inventory ID",
             "Technician",
             "Date",
@@ -95,7 +95,7 @@ INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
     (
         "5) Windows Update + Drivers",
         [
-            "Rename the PC ({ClientNamePascal}{Role2LUpper}{numbering00})",
+            "Rename the PC ({ClientNamePascal}-{Role2LUpper}-{numbering00})",
             "Run Windows Update until \"Up to date\"",
             "Install chipset drivers",
             "Install network drivers (LAN/10GbE/Wi-Fi)",
@@ -1225,7 +1225,8 @@ class MainWindow(QtWidgets.QWidget):
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD))
 
         role_prefix = role_value[:2]
-        return f"{client_name}{role_prefix}{numbering_value}"
+        hostname_parts = [part for part in [client_name, role_prefix, numbering_value] if part]
+        return "-".join(hostname_parts)
 
     @staticmethod
     def _to_alnum(value: str) -> str:
