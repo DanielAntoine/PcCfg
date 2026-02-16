@@ -31,9 +31,8 @@ CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_
 CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Client name": "text",
     "Computer role": "text",
-    "2-letter suffix (first 2 letters of the role)": "text",
     "Numbering00 (e.g., 01, 02, 03)": "text",
-    "Hostname/User: {ClientName}-{suffix2L}-{numbering00}": "text",
+    "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}": "text",
     "Inventory ID": "text",
     "Technician": "text",
     "Date": "date",
@@ -45,9 +44,8 @@ CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
 
 CLIENT_NAME_FIELD = "Client name"
 COMPUTER_ROLE_FIELD = "Computer role"
-ROLE_SUFFIX_FIELD = "2-letter suffix (first 2 letters of the role)"
 NUMBERING_FIELD = "Numbering00 (e.g., 01, 02, 03)"
-HOSTNAME_FIELD = "Hostname/User: {ClientName}-{suffix2L}-{numbering00}"
+HOSTNAME_FIELD = "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}"
 INVENTORY_ID_FIELD = "Inventory ID"
 DATE_FIELD = "Date"
 FILE_NAME_FIELD = "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg"
@@ -59,9 +57,8 @@ INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
         [
             "Client name",
             "Computer role",
-            "2-letter suffix (first 2 letters of the role)",
             "Numbering00 (e.g., 01, 02, 03)",
-            "Hostname/User: {ClientName}-{suffix2L}-{numbering00}",
+            "Hostname/User: {ClientNamePascal}{Role2LUpper}{numbering00}",
             "Inventory ID",
             "Technician",
             "Date",
@@ -98,7 +95,7 @@ INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
     (
         "5) Windows Update + Drivers",
         [
-            "Rename the PC ({ClientName}-{suffix2L}-{numbering00})",
+            "Rename the PC ({ClientNamePascal}{Role2LUpper}{numbering00})",
             "Run Windows Update until \"Up to date\"",
             "Install chipset drivers",
             "Install network drivers (LAN/10GbE/Wi-Fi)",
@@ -1183,7 +1180,6 @@ class MainWindow(QtWidgets.QWidget):
         source_fields = {
             CLIENT_NAME_FIELD,
             COMPUTER_ROLE_FIELD,
-            ROLE_SUFFIX_FIELD,
             NUMBERING_FIELD,
             INVENTORY_ID_FIELD,
             DATE_FIELD,
@@ -1218,14 +1214,21 @@ class MainWindow(QtWidgets.QWidget):
         self._last_autofill_values[field_label] = proposed_value
 
     def _build_hostname_value(self) -> str:
-        client_name = self._get_line_edit_value(CLIENT_NAME_FIELD)
-        suffix_value = self._get_line_edit_value(ROLE_SUFFIX_FIELD)
-        role_value = self._get_line_edit_value(COMPUTER_ROLE_FIELD)
-        numbering_value = self._get_line_edit_value(NUMBERING_FIELD)
+        client_name = self._to_pascal_case_alnum(self._get_line_edit_value(CLIENT_NAME_FIELD))
+        role_value = self._to_alnum(self._get_line_edit_value(COMPUTER_ROLE_FIELD)).upper()
+        numbering_value = self._to_alnum(self._get_line_edit_value(NUMBERING_FIELD))
 
-        suffix = suffix_value or role_value[:2]
-        parts = [part for part in [client_name, suffix, numbering_value] if part]
-        return "-".join(parts)
+        role_prefix = role_value[:2]
+        return f"{client_name}{role_prefix}{numbering_value}"
+
+    @staticmethod
+    def _to_alnum(value: str) -> str:
+        return "".join(char for char in value if char.isalnum())
+
+    @classmethod
+    def _to_pascal_case_alnum(cls, value: str) -> str:
+        words = re.split(r"[^A-Za-z0-9]+", value)
+        return "".join(cls._to_alnum(word).capitalize() for word in words if word)
 
     def _build_file_name_value(self) -> str:
         date_widget = self.checklist_info_inputs.get(DATE_FIELD)
