@@ -1161,7 +1161,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setColumnWidth(0, max(info_column_width * 2, 420))
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
-        self.installation_checklist_group.setMinimumWidth(720)
+        self.installation_checklist_group.setMinimumWidth(820)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
