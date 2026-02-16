@@ -1114,6 +1114,13 @@ class MainWindow(QtWidgets.QWidget):
                     value_input.dateChanged.connect(
                         lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
                     )
+                elif item_label == NUMBERING_FIELD:
+                    value_input = QtWidgets.QComboBox()
+                    value_input.setEditable(True)
+                    value_input.addItems([f"{number:02d}" for number in range(1, 100)])
+                    value_input.currentTextChanged.connect(
+                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                    )
                 else:
                     value_input = QtWidgets.QLineEdit()
                     value_input.setPlaceholderText("Add details")
@@ -1221,7 +1228,7 @@ class MainWindow(QtWidgets.QWidget):
         client_name = self._get_line_edit_value(CLIENT_NAME_FIELD)
         suffix_value = self._get_line_edit_value(ROLE_SUFFIX_FIELD)
         role_value = self._get_line_edit_value(COMPUTER_ROLE_FIELD)
-        numbering_value = self._get_line_edit_value(NUMBERING_FIELD)
+        numbering_value = self._normalize_numbering_value(self._get_line_edit_value(NUMBERING_FIELD))
 
         suffix = suffix_value or role_value[:2]
         parts = [part for part in [client_name, suffix, numbering_value] if part]
@@ -1243,7 +1250,18 @@ class MainWindow(QtWidgets.QWidget):
         widget = self.checklist_info_inputs.get(field_label)
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
+        if isinstance(widget, QtWidgets.QComboBox):
+            return widget.currentText().strip()
         return ""
+
+    @staticmethod
+    def _normalize_numbering_value(raw_value: str) -> str:
+        value = raw_value.strip()
+        if value.isdigit():
+            number = int(value)
+            if 1 <= number <= 99:
+                return f"{number:02d}"
+        return value
 
     def _update_installation_checklist_progress(self) -> None:
         total = len(self.installation_checklist_items)
@@ -1364,6 +1382,8 @@ class MainWindow(QtWidgets.QWidget):
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
+        if isinstance(widget, QtWidgets.QComboBox):
+            return widget.currentText().strip()
         if isinstance(widget, QtWidgets.QDateEdit):
             return widget.date().toString("yyyy-MM-dd")
         return ""
@@ -1371,6 +1391,9 @@ class MainWindow(QtWidgets.QWidget):
     def _set_checklist_info_value(self, widget: QtWidgets.QWidget, value: str) -> None:
         if isinstance(widget, QtWidgets.QLineEdit):
             widget.setText(value)
+            return
+        if isinstance(widget, QtWidgets.QComboBox):
+            widget.setCurrentText(self._normalize_numbering_value(value))
             return
         if isinstance(widget, QtWidgets.QDateEdit):
             parsed_date = QtCore.QDate.fromString(value, "yyyy-MM-dd")
