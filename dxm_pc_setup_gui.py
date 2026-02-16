@@ -28,6 +28,132 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 
 
+INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
+    (
+        "0) Infos du poste",
+        [
+            "Nom du client",
+            "Tâche de l’ordinateur",
+            "Suffix 2 lettres (2 premières lettres de la tâche)",
+            "Numbering00 (ex: 01, 02, 03)",
+            "Hostname/Utilisateur: {NomDuClient}-{suffix2L}-{numbering00}",
+            "ID inventaire",
+            "Technicien",
+            "Date",
+            "Cartes présentes: BMD / 10GbE / autres",
+        ],
+    ),
+    (
+        "1) Preuves / Photos",
+        [
+            "Nom fichier: YYYYMMDD_IDinventaire_Step_{enumeration000}.jpg",
+            "Joindre les photos dans la fiche inventaire client ou le ticket",
+        ],
+    ),
+    (
+        "2) Inspection physique",
+        [
+            "Ouvrir le case + photos UNBOX",
+            "Vérifier composants vs facture (RAM/SSD/GPU/cartes)",
+            "Vérifier câbles (rien dans les fans / rien de loose)",
+        ],
+    ),
+    ("3) Boot initial", ["Démarrer le PC", "Vérifier que tous les fans tournent (CPU/GPU/case)"]),
+    (
+        "4) BIOS / UEFI",
+        [
+            "Mettre le BIOS à jour (version avant/après)",
+            "Enable 4G Decoding",
+            "Enable Resizable BAR support (ReBAR)",
+            "Boot en UEFI (CSM OFF)",
+            "Enable XMP / EXPO",
+            "Sauver / reboot",
+        ],
+    ),
+    (
+        "5) Windows Update + Drivers",
+        [
+            "Changer le nom du PC ({NomDuClient}-{suffix2L}-{numbering00})",
+            "Windows Update jusqu’à \"Up to date\"",
+            "Installer Chipset",
+            "Installer Réseau (LAN/10GbE/Wi-Fi)",
+            "Installer GPU (NVIDIA/AMD)",
+            "Installer Audio",
+            "Installer Blackmagic Desktop Video (si carte présente)",
+            "Installer autres cartes (USB/RAID/etc)",
+            "Validation: Device Manager = 0 unknown devices",
+        ],
+    ),
+    (
+        "6) GPU NVIDIA",
+        [
+            "NVIDIA Control Panel > Power management mode > Prefer maximum performance",
+        ],
+    ),
+    (
+        "7) Nettoyage (manuel)",
+        [
+            "Supprimer bloatware",
+            "Vérifier Startup apps (Task Manager > Startup)",
+        ],
+    ),
+    (
+        "8) Power / Sleep / Fast Startup",
+        [
+            "Power plan: Performance (High performance)",
+            "Sleep: Never (AC)",
+            "Hibernate: Off",
+            "Disk sleep: Never",
+            "Monitor timeout: 30 min",
+            "Désactiver Fast Startup",
+        ],
+    ),
+    ("9) Game Bar / Game DVR", ["Désactiver Game Bar / Game DVR"]),
+    (
+        "10) Performance options",
+        ["Activer Best performance + conserver les thumbnails"],
+    ),
+    ("11) Notifications", ["Disable Windows notifications (current user)"]),
+    ("12) Disques", ["S’assurer que tous les disques sont visibles"]),
+    (
+        "13) Réseau & support",
+        [
+            "Tester ports USB",
+            "Tester Wi-Fi",
+            "Installer ScreenConnect",
+            "Tester connexion remote",
+            "Noter ScreenConnect ID",
+            "MP et clés stockés dans Vault",
+        ],
+    ),
+    (
+        "14) Logiciels (source client)",
+        [
+            "Installer selon la liste client",
+            "Tester les apps critiques",
+        ],
+    ),
+    (
+        "15) Validation carte(s) capture",
+        [
+            "Tester I/O via Blackmagic Media Express",
+            "Tester dans vMix (si requis)",
+            "Tester StreamDeck dans vMix (si requis)",
+        ],
+    ),
+    (
+        "16) Repack / InstaPak",
+        [
+            "Photo PACK_BEFORE_001",
+            "Mettre InstaPak, refermer, attendre mousse",
+            "Photo PACK_AFTER_001",
+            "Retirer InstaPak pour vérifier que le client peut l’enlever",
+            "Remettre InstaPak + fermer + emballer final",
+        ],
+    ),
+]
+
+
 @dataclass
 class ApplyTask:
     key: str
@@ -909,6 +1035,40 @@ class MainWindow(QtWidgets.QWidget):
             self.manual_layout.addLayout(app_row)
         self.manual_layout.addStretch(1)
 
+        self.installation_checklist_group = QtWidgets.QGroupBox("Installation PC checklist")
+        checklist_group_layout = QtWidgets.QVBoxLayout(self.installation_checklist_group)
+
+        self.installation_checklist_progress = QtWidgets.QLabel("0/0 completed")
+        checklist_group_layout.addWidget(self.installation_checklist_progress)
+
+        self.installation_checklist_tree = QtWidgets.QTreeWidget()
+        self.installation_checklist_tree.setColumnCount(1)
+        self.installation_checklist_tree.setHeaderHidden(True)
+        self.installation_checklist_tree.setRootIsDecorated(False)
+        self.installation_checklist_tree.setAlternatingRowColors(True)
+        self.installation_checklist_tree.setUniformRowHeights(True)
+        checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
+
+        self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
+        for section_label, section_items in INSTALLATION_PC_CHECKLIST:
+            section_header = QtWidgets.QTreeWidgetItem([section_label])
+            section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
+            section_header.setFirstColumnSpanned(True)
+            section_font = section_header.font(0)
+            section_font.setBold(True)
+            section_header.setFont(0, section_font)
+            self.installation_checklist_tree.addTopLevelItem(section_header)
+
+            for item_label in section_items:
+                checklist_item = QtWidgets.QTreeWidgetItem([f"☐ {item_label}"])
+                checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
+                checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
+                self.installation_checklist_tree.addTopLevelItem(checklist_item)
+                self.installation_checklist_items.append(checklist_item)
+
+        self.installation_checklist_tree.itemChanged.connect(self._update_installation_checklist_progress)
+        self._update_installation_checklist_progress()
+
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
@@ -931,6 +1091,7 @@ class MainWindow(QtWidgets.QWidget):
         right_column = QtWidgets.QHBoxLayout()
         right_column.addWidget(self.apps_group, stretch=1)
         right_column.addWidget(self.manual_group, stretch=1)
+        right_column.addWidget(self.installation_checklist_group, stretch=1)
 
         layout.addLayout(left_column, stretch=3)
         layout.addLayout(right_column, stretch=2)
@@ -944,6 +1105,11 @@ class MainWindow(QtWidgets.QWidget):
 
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
+
+    def _update_installation_checklist_progress(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
+        total = len(self.installation_checklist_items)
+        done = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
+        self.installation_checklist_progress.setText(f"{done}/{total} completed")
 
     def _save_report_txt(self) -> None:
         report_content = self.output.toPlainText().strip()
