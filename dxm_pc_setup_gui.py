@@ -152,7 +152,7 @@ def get_latest_windows_11_build_from_web() -> str:
     except (URLError, TimeoutError, OSError):
         return "Unable to query"
 
-    matches = re.findall(r"OS Build\s+([0-9]{5}\.[0-9]+)", html, flags=re.IGNORECASE)
+    matches = re.findall(r"(?:OS\s*)?Build\s*([0-9]{5}\.[0-9]+)", html, flags=re.IGNORECASE)
     if not matches:
         return "Unable to parse"
 
@@ -181,6 +181,8 @@ def guess_gpu_vendor(name: str) -> str:
     value = name.lower()
     if "nvidia" in value or "geforce" in value or "quadro" in value:
         return "NVIDIA"
+    if "blackmagic" in value or "decklink" in value:
+        return "Blackmagic"
     if "amd" in value or "radeon" in value:
         return "AMD"
     if "intel" in value:
@@ -192,9 +194,37 @@ def get_vendor_driver_lookup_hint(vendor: str) -> str:
     links = {
         "NVIDIA": "https://www.nvidia.com/Download/index.aspx",
         "AMD": "https://www.amd.com/en/support/download/drivers.html",
+        "Blackmagic": "https://www.blackmagicdesign.com/support/",
         "Intel": "https://www.intel.com/content/www/us/en/support/detect.html",
     }
     return links.get(vendor, "Vendor support page")
+
+
+def format_driver_date(raw_date: str) -> str:
+    """Normalize WMI driver date values to YYYY-MM-DD when possible."""
+    value = raw_date.strip()
+    if not value:
+        return "Unknown"
+
+    ms_epoch = re.search(r"/Date\((\d+)", value)
+    if ms_epoch:
+        try:
+            return datetime.fromtimestamp(int(ms_epoch.group(1)) / 1000).strftime("%Y-%m-%d")
+        except (OverflowError, ValueError, OSError):
+            return value
+
+    iso_like = re.match(r"(\d{4})(\d{2})(\d{2})", value)
+    if iso_like:
+        return f"{iso_like.group(1)}-{iso_like.group(2)}-{iso_like.group(3)}"
+    return value
+
+
+def is_target_video_device(name: str, pnp_device_id: str) -> bool:
+    """Keep only physical target vendors requested by the workflow."""
+    text = f"{name} {pnp_device_id}".lower()
+    vendor_match = any(token in text for token in ("nvidia", "geforce", "quadro", "amd", "radeon", "blackmagic", "decklink"))
+    virtual_tokens = ("virtual", "parsec", "vorpx", "meta", "mridd")
+    return vendor_match and not any(token in text for token in virtual_tokens)
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -414,121 +444,47 @@ class MainWindow(QtWidgets.QWidget):
             display_value = parse_registry_value(os_display)
             if display_value:
                 self._append(f"Release   : {display_value}")
+            current_full_build = "Unknown"
             if ubr_value is not None:
-                self._append(f"Full build: {compact_single_line(os_build)}.{ubr_value}")
-            self._append(f"Latest Win11 build (web): {get_latest_windows_11_build_from_web()}")
+                current_full_build = f"{compact_single_line(os_build)}.{ubr_value}"
+                self._append(f"Full build: {current_full_build}")
+            latest_build = get_latest_windows_11_build_from_web()
+            self._append(f"Latest Win11 build (web): {latest_build}")
+            if current_full_build != "Unknown" and re.match(r"^\d+\.\d+$", latest_build):
+                current_tuple = tuple(int(p) for p in current_full_build.split("."))
+                latest_tuple = tuple(int(p) for p in latest_build.split("."))
+                windows_ok = current_tuple >= latest_tuple
+                self._append(f"Windows status: {'Up to date' if windows_ok else 'Update available'} [{status_tag(windows_ok)}]")
+            else:
+                self._append("Windows status: Unable to compare [Not Ok]")
         else:
             self._append("OS        : unable to query")
         self._append(f"Admin     : {'YES' if is_admin() else 'NO'}")
         self._append()
 
-        self._append("Video adapters")
+        self._append("Target video cards (NVIDIA / AMD / Blackmagic)")
         self._append("-" * 60)
         gpu_cmd = (
             "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | "
             "Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress\""
         )
         _, gpu_out = run_command(gpu_cmd)
-        gpus = parse_json_payload(gpu_out)
+        gpus = [gpu for gpu in parse_json_payload(gpu_out) if is_target_video_device(str(gpu.get("Name", "")), str(gpu.get("PNPDeviceID", "")))]
         if gpus:
+            self._append(f"Found     : {len(gpus)} matching device(s)")
             for gpu in gpus:
                 name = str(gpu.get("Name", "Unknown")).strip() or "Unknown"
                 version = str(gpu.get("DriverVersion", "Unknown")).strip() or "Unknown"
-                date = str(gpu.get("DriverDate", "")).strip()
+                date = format_driver_date(str(gpu.get("DriverDate", "")))
                 vendor = guess_gpu_vendor(name)
                 lookup = get_vendor_driver_lookup_hint(vendor)
                 self._append(f"GPU       : {name}")
                 self._append(f"  Driver  : {version}")
-                if date:
-                    self._append(f"  Date    : {date}")
+                self._append(f"  Date    : {date}")
                 self._append(f"  Latest  : check {vendor} site -> {lookup}")
         else:
-            self._append("GPU       : Unable to query")
+            self._append("GPU       : No NVIDIA/AMD/Blackmagic video card detected")
         self._append()
-
-        self._append("PCI hardware (network/storage/display, etc.)")
-        self._append("-" * 60)
-        pci_cmd = (
-            "powershell -NoProfile -Command \"Get-CimInstance Win32_PnPSignedDriver | "
-            "Where-Object { $_.DeviceID -like 'PCI*' } | "
-            "Select-Object DeviceName,DriverVersion,DriverProviderName,DeviceClass | "
-            "Sort-Object DeviceClass,DeviceName | ConvertTo-Json -Compress\""
-        )
-        _, pci_out = run_command(pci_cmd)
-        pci_devices = parse_json_payload(pci_out)
-        if pci_devices:
-            self._append(f"Found     : {len(pci_devices)} PCI devices")
-            for dev in pci_devices[:40]:
-                dev_name = str(dev.get("DeviceName", "Unknown")).strip() or "Unknown"
-                dev_ver = str(dev.get("DriverVersion", "Unknown")).strip() or "Unknown"
-                dev_class = str(dev.get("DeviceClass", "Unknown")).strip() or "Unknown"
-                provider = str(dev.get("DriverProviderName", "Unknown")).strip() or "Unknown"
-                self._append(f"- {dev_class}: {dev_name}")
-                self._append(f"  Driver  : {dev_ver} ({provider})")
-            if len(pci_devices) > 40:
-                self._append(f"... truncated list ({len(pci_devices) - 40} more devices not shown)")
-            self._append("Latest web driver check for all PCI devices is vendor/model specific and must be validated per device.")
-        else:
-            self._append("PCI       : Unable to query")
-        self._append()
-
-        self._append("Configuration checks")
-        self._append("-" * 60)
-
-        checks = [
-            ("Active power plan", "powercfg /getactivescheme", parse_active_power_plan),
-            ("Fast Startup", "reg query \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power\" /v HiberbootEnabled", parse_registry_value),
-            ("GameDVR enabled", "reg query \"HKCU\\System\\GameConfigStore\" /v GameDVR_Enabled", parse_registry_value),
-            ("App capture enabled", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR\" /v AppCaptureEnabled", parse_registry_value),
-            ("Policy: AllowGameDVR", "reg query \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR\" /v AllowGameDVR", parse_registry_value),
-            ("Visual effects level", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects\" /v VisualFXSetting", parse_registry_value),
-            ("Desktop icon labels", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\" /v IconsOnly", parse_registry_value),
-            ("Toast notifications", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\" /v ToastEnabled", parse_registry_value),
-            ("Notification center", "reg query \"HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer\" /v DisableNotificationCenter", parse_registry_value),
-        ]
-
-        for title, cmd, parser in checks:
-            rc, out = run_command(cmd)
-            if rc == 0 and out:
-                parsed = parser(out)
-                value = parsed if parsed else compact_single_line(out)
-
-                display_value = value
-                ok = False
-                parsed_int = parse_registry_int(value)
-                lowered_title = title.lower()
-                if title == "Active power plan":
-                    display_value = "High performance" if "high performance" in value.lower() else value
-                    ok = "high performance" in value.lower()
-                elif title == "Fast Startup":
-                    is_disabled = parsed_int == 0
-                    display_value = "Disable" if is_disabled else "Enable"
-                    ok = is_disabled
-                elif "allowgamedvr" in lowered_title:
-                    is_disabled = parsed_int == 0
-                    display_value = "Disable" if is_disabled else "Enable"
-                    ok = is_disabled
-                elif "enabled" in lowered_title or "notifications" in lowered_title:
-                    is_disabled = parsed_int == 0
-                    display_value = "Disable" if is_disabled else "Enable"
-                    ok = is_disabled
-                elif "notification center" in lowered_title:
-                    is_disabled = parsed_int == 1
-                    display_value = "Disable" if is_disabled else "Enable"
-                    ok = is_disabled
-                elif "desktop icon labels" in lowered_title:
-                    show_labels = parsed_int == 0
-                    display_value = "Show" if show_labels else "Hide"
-                    ok = show_labels
-                elif "visual effects" in lowered_title:
-                    display_value = "Best performance" if parsed_int == 2 else value
-                    ok = parsed_int == 2
-                else:
-                    ok = parsed_int is not None
-
-                self._append(f"{title:<24}: {display_value} [{status_tag(ok)}]")
-            else:
-                self._append(f"{title:<24}: Unable to query [{status_tag(False)}]")
 
     def run_apply(self) -> None:
         self._append("=== DXM PC Setup (APPLY) ===")
