@@ -1042,11 +1042,15 @@ class MainWindow(QtWidgets.QWidget):
         checklist_group_layout.addWidget(self.installation_checklist_progress)
 
         self.installation_checklist_tree = QtWidgets.QTreeWidget()
+        self.installation_checklist_tree.setObjectName("installationChecklistTree")
         self.installation_checklist_tree.setColumnCount(1)
         self.installation_checklist_tree.setHeaderHidden(True)
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setAlternatingRowColors(True)
         self.installation_checklist_tree.setUniformRowHeights(True)
+        self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
+        self.installation_checklist_tree.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.installation_checklist_tree.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
@@ -1068,6 +1072,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self.installation_checklist_tree.itemChanged.connect(self._update_installation_checklist_progress)
         self._update_installation_checklist_progress()
+        self.installation_checklist_group.setMinimumWidth(460)
 
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
@@ -1091,7 +1096,7 @@ class MainWindow(QtWidgets.QWidget):
         right_column = QtWidgets.QHBoxLayout()
         right_column.addWidget(self.apps_group, stretch=1)
         right_column.addWidget(self.manual_group, stretch=1)
-        right_column.addWidget(self.installation_checklist_group, stretch=1)
+        right_column.addWidget(self.installation_checklist_group, stretch=2)
 
         layout.addLayout(left_column, stretch=3)
         layout.addLayout(right_column, stretch=2)

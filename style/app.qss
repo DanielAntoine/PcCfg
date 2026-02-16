@@ -225,6 +225,20 @@ QTableView, QTreeView, QListView, QTreeWidget, QTableWidget {
     border: 1px solid #1e1e1e;
     gridline-color: #1e1e1e;
 }
+
+QTreeWidget#installationChecklistTree {
+    font-size: 13px;
+}
+
+QTreeWidget#installationChecklistTree::item {
+    min-height: 24px;
+}
+
+QTreeWidget#installationChecklistTree::indicator {
+    width: 16px;
+    height: 16px;
+}
+
 QHeaderView::section {
     background-color: #2a2a2a;
     color: #E0E0E0;
