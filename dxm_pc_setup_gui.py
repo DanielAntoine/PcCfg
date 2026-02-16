@@ -34,6 +34,13 @@ class ApplyTask:
     action: Callable[[], list[str]]
 
 
+@dataclass
+class InstallApp:
+    key: str
+    label: str
+    winget_id: str
+
+
 def run_command(command: str) -> tuple[int, str]:
     """Run command with shell and return (return_code, output)."""
     proc = subprocess.run(
@@ -235,6 +242,8 @@ class MainWindow(QtWidgets.QWidget):
 
         self.apply_tasks = self._build_tasks()
         self.task_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
+        self.install_apps = self._build_install_apps()
+        self.app_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
         self.rename_input = QtWidgets.QLineEdit()
         self.rename_input.setPlaceholderText("New computer name")
         self.rename_input.setEnabled(False)
@@ -255,6 +264,15 @@ class MainWindow(QtWidgets.QWidget):
             else:
                 self.tasks_layout.addWidget(cb)
 
+        self.apps_group = QtWidgets.QGroupBox("Applications (winget)")
+        self.apps_layout = QtWidgets.QVBoxLayout(self.apps_group)
+        for app in self.install_apps:
+            cb = QtWidgets.QCheckBox(app.label)
+            cb.setChecked(False)
+            self.app_checkboxes[app.key] = cb
+            self.apps_layout.addWidget(cb)
+        self.apps_layout.addStretch(1)
+
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
@@ -266,7 +284,12 @@ class MainWindow(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.select_all_checkbox)
-        layout.addWidget(self.tasks_group)
+
+        options_row = QtWidgets.QHBoxLayout()
+        options_row.addWidget(self.tasks_group, stretch=2)
+        options_row.addWidget(self.apps_group, stretch=1)
+
+        layout.addLayout(options_row)
         layout.addLayout(btn_row)
         layout.addWidget(self.output)
         layout.addLayout(bottom_row)
@@ -379,6 +402,17 @@ class MainWindow(QtWidgets.QWidget):
             ),
         ]
 
+    def _build_install_apps(self) -> list[InstallApp]:
+        return [
+            InstallApp("vlc", "VLC media player", "VideoLAN.VLC"),
+            InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake"),
+            InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++"),
+            InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio"),
+            InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg"),
+            InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI"),
+            InstallApp("blender", "Blender", "BlenderFoundation.Blender"),
+        ]
+
     def _append(self, text: str = "") -> None:
         self.output.appendPlainText(text)
         self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
@@ -386,6 +420,8 @@ class MainWindow(QtWidgets.QWidget):
     def _toggle_all(self, state: int) -> None:
         checked = state == QtCore.Qt.Checked
         for cb in self.task_checkboxes.values():
+            cb.setChecked(checked)
+        for cb in self.app_checkboxes.values():
             cb.setChecked(checked)
 
     def _run_inspect(self) -> None:
@@ -651,13 +687,14 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         selected = [t for t in self.apply_tasks if self.task_checkboxes[t.key].isChecked()]
+        selected_apps = [a for a in self.install_apps if self.app_checkboxes[a.key].isChecked()]
         if self.task_checkboxes["rename_pc"].isChecked() and not self.rename_input.text().strip():
             selected = [t for t in selected if t.key != "rename_pc"]
             self._append("Rename computer step skipped (name is empty).")
             self._append()
 
-        if not selected:
-            self._append("No APPLY options selected.")
+        if not selected and not selected_apps:
+            self._append("No APPLY options or application installs selected.")
             return
 
         total = len(selected)
@@ -671,6 +708,20 @@ class MainWindow(QtWidgets.QWidget):
                 if out:
                     self._append(f"    {out}")
             self._append()
+
+        if selected_apps:
+            self._append("Applications installation")
+            self._append("-" * 30)
+            for idx, app in enumerate(selected_apps, start=1):
+                cmd = f"winget install --id {app.winget_id} -e --accept-package-agreements --accept-source-agreements"
+                self._append(f"[{idx}/{len(selected_apps)}] {app.label}")
+                rc, out = run_command(cmd)
+                status = "OK" if rc == 0 else f"FAIL (exit {rc})"
+                self._append(f"  $ {cmd}")
+                self._append(f"    -> {status}")
+                if out:
+                    self._append(f"    {out}")
+                self._append()
 
         self._append("DONE. Reboot is recommended (required if computer rename was applied).")
 
