@@ -90,8 +90,8 @@ def relaunch_as_admin() -> bool:
 
 
 def load_stylesheet() -> str:
-    """Load optional Qt stylesheet from ./style/app.qss."""
-    stylesheet_path = Path(__file__).resolve().parent / "style" / "app.qss"
+    """Load optional Qt stylesheet from ./style/materialdark.qss."""
+    stylesheet_path = Path(__file__).resolve().parent / "style" / "materialdark.qss"
     if not stylesheet_path.exists():
         return ""
     return stylesheet_path.read_text(encoding="utf-8")
