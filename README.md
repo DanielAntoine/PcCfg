@@ -93,7 +93,8 @@ Install-Package <name> -Force -Confirm:$false
 - Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
 
 ## TODO
-[] culumn info is way to far to the right or task start way to large
-[] make the computer name the same as hostname, remove computer name manuel input, host name must containe the 3 element 
-[] List what can be check in the checklist using the inspect button. Example is Wifi connected
-[] make the inspect check in the checklist when ok
+- [ ] Redesign the full checklist/table layout spacing so columns align cleanly, content does not drift to the right, and row/task spacing is consistently sized across the UI.
+- [ ] Constrain long checklist text to wrap to a maximum of 2 lines; use the second line only when needed so single-line content does not reserve extra blank row height.
+- [ ] Replace plain checklist status text with status chips (`PASS`, `FAIL`, `PENDING`, `RUNNING`) and apply consistent color semantics per status across the UI.
+- [ ] Generate the hostname automatically using `{ClientNamePascal}-{Role2LUpper}-{numbering00}` and remove manual computer-name input.
+- [ ] Make Inspect display live detection results for available checks (for example, Wi-Fi connectivity), and auto-check checklist items only when a check passes.
