@@ -93,6 +93,11 @@ QComboBox, QDateEdit, QDateTimeEdit, QTimeEdit {
     color: #E0E0E0;
     selection-background-color: #385b7e;
 }
+
+QPlainTextEdit {
+    font-family: "Consolas";
+}
+
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus,
 QDateEdit:focus, QDateTimeEdit:focus, QTimeEdit:focus {
@@ -294,4 +299,3 @@ QLabel {
 QLabel[link="true"], QLabel[link="true"]:hover {
     color: #385b7e;
 }
-
