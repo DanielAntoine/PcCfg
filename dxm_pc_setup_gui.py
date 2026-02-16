@@ -27,6 +27,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_log.json")
+CHECKLIST_TASK_MAX_LEN = 52
 
 CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Client name": "text",
@@ -371,6 +372,14 @@ def parse_powercfg_indices(output: str) -> tuple[int | None, int | None]:
 
 def status_tag(ok: bool) -> str:
     return "Ok" if ok else "Not Ok"
+
+
+def shorten_task_label(label: str, max_len: int = CHECKLIST_TASK_MAX_LEN) -> str:
+    """Keep checklist labels compact for better readability in the task column."""
+    normalized = " ".join(label.split())
+    if len(normalized) <= max_len:
+        return normalized
+    return f"{normalized[: max_len - 1].rstrip()}…"
 
 
 STATUS_LABEL_WIDTH = 28
@@ -1069,6 +1078,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setColumnCount(2)
         self.installation_checklist_tree.setHeaderLabels(["Task", "Info"])
         self.installation_checklist_tree.setRootIsDecorated(False)
+        self.installation_checklist_tree.setMouseTracking(True)
         self.installation_checklist_tree.setAlternatingRowColors(True)
         self.installation_checklist_tree.setUniformRowHeights(True)
         self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
@@ -1077,6 +1087,13 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
+
+        self.checklist_status_bar = QtWidgets.QLabel("Ready")
+        self.checklist_status_bar.setObjectName("checklistStatusBar")
+        self.checklist_status_bar.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.checklist_status_bar.setMinimumHeight(24)
+        self.checklist_status_bar.setWordWrap(False)
+        checklist_group_layout.addWidget(self.checklist_status_bar)
 
         self._is_loading_checklist_state = False
         self._is_autofilling_checklist_info = False
@@ -1093,9 +1110,12 @@ class MainWindow(QtWidgets.QWidget):
             self.installation_checklist_tree.addTopLevelItem(section_header)
 
             for item_label in section_items:
-                checklist_item = QtWidgets.QTreeWidgetItem([item_label, ""])
+                short_label = shorten_task_label(item_label)
+                checklist_item = QtWidgets.QTreeWidgetItem([short_label, ""])
                 checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
+                checklist_item.setData(0, QtCore.Qt.UserRole, item_label)
+                checklist_item.setToolTip(0, item_label)
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
                 self.installation_checklist_items.append(checklist_item)
 
@@ -1128,6 +1148,8 @@ class MainWindow(QtWidgets.QWidget):
                 self.checklist_info_inputs[item_label] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
+        self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
+        self.installation_checklist_tree.itemEntered.connect(self._on_checklist_item_hovered)
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(460)
@@ -1178,6 +1200,26 @@ class MainWindow(QtWidgets.QWidget):
         if self._is_loading_checklist_state:
             return
         self._save_installation_checklist_state()
+
+    def _on_checklist_item_focus_changed(
+        self,
+        current: QtWidgets.QTreeWidgetItem | None,
+        _previous: QtWidgets.QTreeWidgetItem | None,
+    ) -> None:
+        self._set_checklist_status_message(current)
+
+    def _on_checklist_item_hovered(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
+        self._set_checklist_status_message(item)
+
+    def _set_checklist_status_message(self, item: QtWidgets.QTreeWidgetItem | None) -> None:
+        if item is None:
+            self.checklist_status_bar.setText("Ready")
+            return
+
+        full_text = item.data(0, QtCore.Qt.UserRole)
+        if not isinstance(full_text, str) or not full_text:
+            full_text = item.text(0)
+        self.checklist_status_bar.setText(full_text)
 
     def _on_checklist_info_field_changed(self, field_label: str) -> None:
         if self._is_loading_checklist_state:
