@@ -2,8 +2,8 @@
 """DXM PC Setup GUI
 
 PyQt-based Windows setup utility inspired by the provided batch script.
-- INSPECT mode: generate/read-only system report.
-- APPLY mode: execute selected configuration actions.
+- Inspect button: generate/read-only system report.
+- Run button: execute selected configuration actions.
 """
 
 from __future__ import annotations
@@ -60,12 +60,10 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle("DXM - PC Setup (PyQt)")
         self.resize(920, 700)
 
-        self.mode_combo = QtWidgets.QComboBox()
-        self.mode_combo.addItems(["INSPECT (report / no changes)", "APPLY (set settings)"])
-
         self.select_all_checkbox = QtWidgets.QCheckBox("Select all APPLY options")
         self.select_all_checkbox.setChecked(True)
 
+        self.inspect_button = QtWidgets.QPushButton("Inspect")
         self.run_button = QtWidgets.QPushButton("Run")
         self.clear_button = QtWidgets.QPushButton("Clear Output")
 
@@ -83,26 +81,21 @@ class MainWindow(QtWidgets.QWidget):
             self.task_checkboxes[task.key] = cb
             self.tasks_layout.addWidget(cb)
 
-        form = QtWidgets.QFormLayout()
-        form.addRow("Mode", self.mode_combo)
-
         btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
 
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(form)
         layout.addWidget(self.select_all_checkbox)
         layout.addWidget(self.tasks_group)
         layout.addLayout(btn_row)
         layout.addWidget(self.output)
 
-        self.mode_combo.currentIndexChanged.connect(self._sync_mode_ui)
         self.select_all_checkbox.stateChanged.connect(self._toggle_all)
-        self.run_button.clicked.connect(self._run_selected_mode)
+        self.inspect_button.clicked.connect(self._run_inspect)
+        self.run_button.clicked.connect(self._run_apply)
         self.clear_button.clicked.connect(self.output.clear)
-
-        self._sync_mode_ui()
 
     def _build_tasks(self) -> list[ApplyTask]:
         return [
@@ -183,19 +176,22 @@ class MainWindow(QtWidgets.QWidget):
         for cb in self.task_checkboxes.values():
             cb.setChecked(checked)
 
-    def _sync_mode_ui(self) -> None:
-        is_apply = self.mode_combo.currentIndex() == 1
-        self.tasks_group.setEnabled(is_apply)
-        self.select_all_checkbox.setEnabled(is_apply)
-
-    def _run_selected_mode(self) -> None:
+    def _run_inspect(self) -> None:
+        self.inspect_button.setEnabled(False)
         self.run_button.setEnabled(False)
         try:
-            if self.mode_combo.currentIndex() == 0:
-                self.run_inspect()
-            else:
-                self.run_apply()
+            self.run_inspect()
         finally:
+            self.inspect_button.setEnabled(True)
+            self.run_button.setEnabled(True)
+
+    def _run_apply(self) -> None:
+        self.inspect_button.setEnabled(False)
+        self.run_button.setEnabled(False)
+        try:
+            self.run_apply()
+        finally:
+            self.inspect_button.setEnabled(True)
             self.run_button.setEnabled(True)
 
     def run_inspect(self) -> None:
