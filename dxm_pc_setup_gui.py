@@ -18,7 +18,7 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, overload
 
 from PyQt5 import QtCore, QtWidgets
 
@@ -31,7 +31,7 @@ APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 class ApplyTask:
     key: str
     label: str
-    action: Callable[[], list[str]]
+    action: Callable[[], list[list[str]]]
 
 
 @dataclass
@@ -42,11 +42,20 @@ class InstallApp:
     category: str
 
 
-def run_command(command: str) -> tuple[int, str]:
-    """Run command with shell and return (return_code, output)."""
+@overload
+def run_command(command: str) -> tuple[int, str]: ...
+
+
+@overload
+def run_command(command: list[str]) -> tuple[int, str]: ...
+
+
+def run_command(command: str | list[str]) -> tuple[int, str]:
+    """Run command and return (return_code, output)."""
+    args = command if isinstance(command, list) else command.split()
     proc = subprocess.run(
-        command,
-        shell=True,
+        args,
+        shell=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -54,6 +63,11 @@ def run_command(command: str) -> tuple[int, str]:
         errors="ignore",
     )
     return proc.returncode, proc.stdout.strip()
+
+
+def format_command(args: list[str]) -> str:
+    """Create a readable command line string for logging."""
+    return subprocess.list2cmdline(args)
 
 
 def is_windows() -> bool:
@@ -364,62 +378,62 @@ class MainWindow(QtWidgets.QWidget):
             ApplyTask(
                 key="power_plan",
                 label="Set power plan to High performance",
-                action=lambda: ["powercfg /setactive SCHEME_MIN"],
+                action=lambda: [["powercfg", "/setactive", "SCHEME_MIN"]],
             ),
             ApplyTask(
                 key="power_timeouts",
                 label="Configure timeouts (Sleep/Hibernate/Disk=Never, Monitor=30m)",
                 action=lambda: [
-                    "powercfg /hibernate off",
-                    "powercfg /change standby-timeout-ac 0",
-                    "powercfg /change standby-timeout-dc 0",
-                    "powercfg /change hibernate-timeout-ac 0",
-                    "powercfg /change hibernate-timeout-dc 0",
-                    "powercfg /change disk-timeout-ac 0",
-                    "powercfg /change disk-timeout-dc 0",
-                    "powercfg /change monitor-timeout-ac 30",
-                    "powercfg /change monitor-timeout-dc 30",
+                    ["powercfg", "/hibernate", "off"],
+                    ["powercfg", "/change", "standby-timeout-ac", "0"],
+                    ["powercfg", "/change", "standby-timeout-dc", "0"],
+                    ["powercfg", "/change", "hibernate-timeout-ac", "0"],
+                    ["powercfg", "/change", "hibernate-timeout-dc", "0"],
+                    ["powercfg", "/change", "disk-timeout-ac", "0"],
+                    ["powercfg", "/change", "disk-timeout-dc", "0"],
+                    ["powercfg", "/change", "monitor-timeout-ac", "30"],
+                    ["powercfg", "/change", "monitor-timeout-dc", "30"],
                 ],
             ),
             ApplyTask(
                 key="usb_suspend",
                 label="Disable USB selective suspend (AC/DC)",
                 action=lambda: [
-                    "powercfg /setacvalueindex SCHEME_MIN 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0",
-                    "powercfg /setdcvalueindex SCHEME_MIN 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0",
-                    "powercfg /setactive SCHEME_MIN",
+                    ["powercfg", "/setacvalueindex", "SCHEME_MIN", "2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "0"],
+                    ["powercfg", "/setdcvalueindex", "SCHEME_MIN", "2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "0"],
+                    ["powercfg", "/setactive", "SCHEME_MIN"],
                 ],
             ),
             ApplyTask(
                 key="fast_startup",
                 label="Disable Fast Startup",
                 action=lambda: [
-                    "reg add \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power\" /v HiberbootEnabled /t REG_DWORD /d 0 /f"
+                    ["reg", "add", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power", "/v", "HiberbootEnabled", "/t", "REG_DWORD", "/d", "0", "/f"]
                 ],
             ),
             ApplyTask(
                 key="game_dvr",
                 label="Disable Game Bar / Game DVR",
                 action=lambda: [
-                    "reg add \"HKCU\\System\\GameConfigStore\" /v GameDVR_Enabled /t REG_DWORD /d 0 /f",
-                    "reg add \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR\" /v AppCaptureEnabled /t REG_DWORD /d 0 /f",
-                    "reg add \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR\" /v AllowGameDVR /t REG_DWORD /d 0 /f",
+                    ["reg", "add", "HKCU\\System\\GameConfigStore", "/v", "GameDVR_Enabled", "/t", "REG_DWORD", "/d", "0", "/f"],
+                    ["reg", "add", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "/v", "AppCaptureEnabled", "/t", "REG_DWORD", "/d", "0", "/f"],
+                    ["reg", "add", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR", "/v", "AllowGameDVR", "/t", "REG_DWORD", "/d", "0", "/f"],
                 ],
             ),
             ApplyTask(
                 key="visual_effects",
                 label="Set visual effects (best performance, keep thumbnails)",
                 action=lambda: [
-                    "reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects\" /v VisualFXSetting /t REG_DWORD /d 2 /f",
-                    "reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\" /v IconsOnly /t REG_DWORD /d 0 /f",
+                    ["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects", "/v", "VisualFXSetting", "/t", "REG_DWORD", "/d", "2", "/f"],
+                    ["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "/v", "IconsOnly", "/t", "REG_DWORD", "/d", "0", "/f"],
                 ],
             ),
             ApplyTask(
                 key="notifications",
                 label="Disable Windows notifications (current user)",
                 action=lambda: [
-                    "reg add \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\" /v ToastEnabled /t REG_DWORD /d 0 /f",
-                    "reg add \"HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer\" /v DisableNotificationCenter /t REG_DWORD /d 1 /f",
+                    ["reg", "add", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications", "/v", "ToastEnabled", "/t", "REG_DWORD", "/d", "0", "/f"],
+                    ["reg", "add", "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "/v", "DisableNotificationCenter", "/t", "REG_DWORD", "/d", "1", "/f"],
                 ],
             ),
             ApplyTask(
@@ -501,11 +515,11 @@ class MainWindow(QtWidgets.QWidget):
             self._append("[ERROR] This tool is intended for Windows.")
             return
 
-        code, os_name = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"")
-        _, os_ver = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Version\"")
-        _, os_build = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).BuildNumber\"")
-        _, os_ubr = run_command("reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v UBR")
-        _, os_display = run_command("reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v DisplayVersion")
+        code, os_name = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Caption"])
+        _, os_ver = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).Version"])
+        _, os_build = run_command(["powershell", "-NoProfile", "-Command", "(Get-CimInstance Win32_OperatingSystem).BuildNumber"])
+        _, os_ubr = run_command(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "UBR"])
+        _, os_display = run_command(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "DisplayVersion"])
         if code == 0:
             self._append("System")
             self._append("-" * 60)
@@ -527,10 +541,12 @@ class MainWindow(QtWidgets.QWidget):
 
         self._append("Target video cards (NVIDIA / AMD / Blackmagic)")
         self._append("-" * 60)
-        gpu_cmd = (
-            "powershell -NoProfile -Command \"Get-CimInstance Win32_VideoController | "
-            "Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress\""
-        )
+        gpu_cmd = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object Name,DriverVersion,DriverDate,PNPDeviceID | ConvertTo-Json -Compress",
+        ]
         _, gpu_out = run_command(gpu_cmd)
         gpus = [gpu for gpu in parse_json_payload(gpu_out) if is_target_video_device(str(gpu.get("Name", "")), str(gpu.get("PNPDeviceID", "")))]
         if gpus:
@@ -551,11 +567,11 @@ class MainWindow(QtWidgets.QWidget):
 
 
     def _query_registry_dword(self, key_path: str, value_name: str) -> int | None:
-        _, output = run_command(f'reg query "{key_path}" /v {value_name}')
+        _, output = run_command(["reg", "query", key_path, "/v", value_name])
         return parse_registry_int(parse_registry_value(output))
 
     def _query_power_setting_indices(self, subgroup_guid: str, setting_guid: str) -> tuple[int | None, int | None]:
-        _, output = run_command(f"powercfg /query scheme_current {subgroup_guid} {setting_guid}")
+        _, output = run_command(["powercfg", "/query", "scheme_current", subgroup_guid, setting_guid])
         return parse_powercfg_indices(output)
 
     def _format_power_dual_status(
@@ -587,7 +603,7 @@ class MainWindow(QtWidgets.QWidget):
     def _build_apply_status_lines(self) -> list[str]:
         lines: list[str] = []
 
-        _, active_plan_out = run_command("powercfg /getactivescheme")
+        _, active_plan_out = run_command(["powercfg", "/getactivescheme"])
         active_plan = parse_active_power_plan(active_plan_out)
         high_perf_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
         active_line = compact_single_line(active_plan_out).lower()
@@ -743,7 +759,7 @@ class MainWindow(QtWidgets.QWidget):
             for cmd in task.action():
                 rc, out = run_command(cmd)
                 status = "OK" if rc == 0 else f"FAIL (exit {rc})"
-                self._append(f"  $ {cmd}")
+                self._append(f"  $ {format_command(cmd)}")
                 self._append(f"    -> {status}")
                 if out:
                     self._append(f"    {out}")
@@ -753,14 +769,21 @@ class MainWindow(QtWidgets.QWidget):
             self._append("Applications installation")
             self._append("-" * 30)
             for idx, app in enumerate(selected_apps, start=1):
-                cmd = (
-                    f"winget install --id {app.winget_id} -e --silent --disable-interactivity "
-                    "--accept-package-agreements --accept-source-agreements"
-                )
+                cmd = [
+                    "winget",
+                    "install",
+                    "--id",
+                    app.winget_id,
+                    "-e",
+                    "--silent",
+                    "--disable-interactivity",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                ]
                 self._append(f"[{idx}/{len(selected_apps)}] {app.label}")
                 rc, out = run_command(cmd)
                 status = "OK" if rc == 0 else f"FAIL (exit {rc})"
-                self._append(f"  $ {cmd}")
+                self._append(f"  $ {format_command(cmd)}")
                 self._append(f"    -> {status}")
                 if out:
                     self._append(f"    {out}")
@@ -768,15 +791,21 @@ class MainWindow(QtWidgets.QWidget):
 
         self._append("DONE. Reboot is recommended (required if computer rename was applied).")
 
-    def _rename_computer_action(self) -> list[str]:
+    def _rename_computer_action(self) -> list[list[str]]:
         new_name = self.rename_input.text().strip()
         if not new_name:
             return []
 
-        sanitized = new_name.strip().replace("'", "")
-        return [
-            f"powershell -NoProfile -Command \"Rename-Computer -NewName '{sanitized}' -Force\""
-        ]
+        if len(new_name) > 15 or not re.fullmatch(r"[A-Za-z0-9-]+", new_name) or new_name.endswith("-"):
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Invalid computer name",
+                "Computer name must be 1-15 characters, use only A-Z, a-z, 0-9, or '-', and cannot end with '-'.",
+            )
+            return []
+
+        ps_command = f"Rename-Computer -NewName '{new_name}' -Force"
+        return [["powershell", "-NoProfile", "-Command", ps_command]]
 
 
 def main() -> int:
