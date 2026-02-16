@@ -43,6 +43,15 @@ CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
     "Record ScreenConnect ID": "text",
 }
 
+CLIENT_NAME_FIELD = "Client name"
+COMPUTER_ROLE_FIELD = "Computer role"
+ROLE_SUFFIX_FIELD = "2-letter suffix (first 2 letters of the role)"
+NUMBERING_FIELD = "Numbering00 (e.g., 01, 02, 03)"
+HOSTNAME_FIELD = "Hostname/User: {ClientName}-{suffix2L}-{numbering00}"
+INVENTORY_ID_FIELD = "Inventory ID"
+DATE_FIELD = "Date"
+FILE_NAME_FIELD = "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg"
+
 
 INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
     (
@@ -1073,6 +1082,8 @@ class MainWindow(QtWidgets.QWidget):
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
         self._is_loading_checklist_state = False
+        self._is_autofilling_checklist_info = False
+        self._last_autofill_values: dict[str, str] = {}
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
         for section_label, section_items in INSTALLATION_PC_CHECKLIST:
@@ -1100,11 +1111,15 @@ class MainWindow(QtWidgets.QWidget):
                     value_input.setDisplayFormat("yyyy-MM-dd")
                     value_input.setCalendarPopup(True)
                     value_input.setDate(QtCore.QDate.currentDate())
-                    value_input.dateChanged.connect(lambda _value: self._save_installation_checklist_state())
+                    value_input.dateChanged.connect(
+                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                    )
                 else:
                     value_input = QtWidgets.QLineEdit()
                     value_input.setPlaceholderText("Add details")
-                    value_input.textChanged.connect(lambda _value: self._save_installation_checklist_state())
+                    value_input.textChanged.connect(
+                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                    )
 
                 self.installation_checklist_tree.setItemWidget(checklist_item, 1, value_input)
                 self.checklist_info_inputs[item_label] = value_input
@@ -1153,11 +1168,82 @@ class MainWindow(QtWidgets.QWidget):
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
 
+        self._apply_checklist_autofill()
+
     def _on_installation_checklist_item_changed(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
         self._update_installation_checklist_progress()
         if self._is_loading_checklist_state:
             return
         self._save_installation_checklist_state()
+
+    def _on_checklist_info_field_changed(self, field_label: str) -> None:
+        if self._is_loading_checklist_state:
+            return
+
+        source_fields = {
+            CLIENT_NAME_FIELD,
+            COMPUTER_ROLE_FIELD,
+            ROLE_SUFFIX_FIELD,
+            NUMBERING_FIELD,
+            INVENTORY_ID_FIELD,
+            DATE_FIELD,
+        }
+        if field_label in source_fields and not self._is_autofilling_checklist_info:
+            self._apply_checklist_autofill()
+
+        self._save_installation_checklist_state()
+
+    def _apply_checklist_autofill(self) -> None:
+        hostname_text = self._build_hostname_value()
+        file_name_text = self._build_file_name_value()
+        self._autofill_line_edit(HOSTNAME_FIELD, hostname_text)
+        self._autofill_line_edit(FILE_NAME_FIELD, file_name_text)
+
+    def _autofill_line_edit(self, field_label: str, proposed_value: str) -> None:
+        widget = self.checklist_info_inputs.get(field_label)
+        if not isinstance(widget, QtWidgets.QLineEdit):
+            return
+
+        current_value = widget.text().strip()
+        last_autofill_value = self._last_autofill_values.get(field_label, "")
+        should_overwrite = not current_value or current_value == last_autofill_value
+        if not should_overwrite:
+            return
+
+        self._is_autofilling_checklist_info = True
+        try:
+            widget.setText(proposed_value)
+        finally:
+            self._is_autofilling_checklist_info = False
+        self._last_autofill_values[field_label] = proposed_value
+
+    def _build_hostname_value(self) -> str:
+        client_name = self._get_line_edit_value(CLIENT_NAME_FIELD)
+        suffix_value = self._get_line_edit_value(ROLE_SUFFIX_FIELD)
+        role_value = self._get_line_edit_value(COMPUTER_ROLE_FIELD)
+        numbering_value = self._get_line_edit_value(NUMBERING_FIELD)
+
+        suffix = suffix_value or role_value[:2]
+        parts = [part for part in [client_name, suffix, numbering_value] if part]
+        return "-".join(parts)
+
+    def _build_file_name_value(self) -> str:
+        date_widget = self.checklist_info_inputs.get(DATE_FIELD)
+        if isinstance(date_widget, QtWidgets.QDateEdit):
+            date_value = date_widget.date().toString("yyyyMMdd")
+        else:
+            date_value = datetime.now().strftime("%Y%m%d")
+
+        inventory_id = self._get_line_edit_value(INVENTORY_ID_FIELD)
+        main_parts = [part for part in [date_value, inventory_id] if part]
+        base_name = "_".join(main_parts) if main_parts else date_value
+        return f"{base_name}_Step_001.jpg"
+
+    def _get_line_edit_value(self, field_label: str) -> str:
+        widget = self.checklist_info_inputs.get(field_label)
+        if isinstance(widget, QtWidgets.QLineEdit):
+            return widget.text().strip()
+        return ""
 
     def _update_installation_checklist_progress(self) -> None:
         total = len(self.installation_checklist_items)
@@ -1210,6 +1296,12 @@ class MainWindow(QtWidgets.QWidget):
         finally:
             self._is_loading_checklist_state = False
 
+        for key in (HOSTNAME_FIELD, FILE_NAME_FIELD):
+            value = self._get_line_edit_value(key)
+            self._last_autofill_values[key] = value
+
+        self._apply_checklist_autofill()
+
     def _start_new_install(self) -> None:
         self._is_loading_checklist_state = True
         try:
@@ -1219,6 +1311,9 @@ class MainWindow(QtWidgets.QWidget):
                 self._set_checklist_info_value(widget, "")
         finally:
             self._is_loading_checklist_state = False
+
+        self._last_autofill_values.clear()
+        self._apply_checklist_autofill()
 
         self._update_installation_checklist_progress()
 
