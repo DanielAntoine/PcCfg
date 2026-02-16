@@ -7,4 +7,6 @@ The goal is to provide two simple workflows:
 - **Inspect mode** to collect and review current system settings safely.
 - **Apply mode** to execute a selected set of common performance and usability tweaks (power, startup, notifications, visual effects, and more).
 
+The app now requests Administrator privileges when launched on Windows.
+
 This helps make fresh-machine setup faster, more consistent, and easier to audit.
