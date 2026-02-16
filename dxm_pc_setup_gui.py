@@ -512,6 +512,10 @@ class MainWindow(QtWidgets.QWidget):
                     is_disabled = parsed_int == 0
                     display_value = "Disable" if is_disabled else "Enable"
                     ok = is_disabled
+                elif "notification center" in lowered_title:
+                    is_disabled = parsed_int == 1
+                    display_value = "Disable" if is_disabled else "Enable"
+                    ok = is_disabled
                 elif "desktop icon labels" in lowered_title:
                     show_labels = parsed_int == 0
                     display_value = "Show" if show_labels else "Hide"
