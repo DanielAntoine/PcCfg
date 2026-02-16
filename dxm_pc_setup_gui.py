@@ -424,6 +424,17 @@ class MainWindow(QtWidgets.QWidget):
         self._append(f"Time      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self._append(f"Computer  : {os.environ.get('COMPUTERNAME', 'Unknown')}")
         self._append()
+        self._append("APPLY options")
+        self._append("-" * 60)
+        for task in self.apply_tasks:
+            selected = self.task_checkboxes[task.key].isChecked()
+            suffix = ""
+            if task.key == "rename_pc" and selected:
+                rename_target = self.rename_input.text().strip() or "<empty>"
+                suffix = f" (target: {rename_target})"
+            marker = "X" if selected else " "
+            self._append(f"[{marker}] {task.label}{suffix}")
+        self._append()
 
         if not is_windows():
             self._append("[ERROR] This tool is intended for Windows.")
