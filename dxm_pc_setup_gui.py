@@ -300,17 +300,17 @@ class MainWindow(QtWidgets.QWidget):
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.save_report_button)
 
-        layout = QtWidgets.QVBoxLayout(self)
-        layout.addWidget(self.select_all_checkbox)
+        layout = QtWidgets.QHBoxLayout(self)
 
-        options_row = QtWidgets.QHBoxLayout()
-        options_row.addWidget(self.tasks_group, stretch=2)
-        options_row.addWidget(self.apps_group, stretch=1)
+        left_column = QtWidgets.QVBoxLayout()
+        left_column.addWidget(self.select_all_checkbox)
+        left_column.addWidget(self.tasks_group)
+        left_column.addLayout(btn_row)
+        left_column.addWidget(self.output)
+        left_column.addLayout(bottom_row)
 
-        layout.addLayout(options_row)
-        layout.addLayout(btn_row)
-        layout.addWidget(self.output)
-        layout.addLayout(bottom_row)
+        layout.addLayout(left_column, stretch=3)
+        layout.addWidget(self.apps_group, stretch=1)
 
         self.select_all_checkbox.stateChanged.connect(self._toggle_all)
         self.inspect_button.clicked.connect(self._run_inspect)
