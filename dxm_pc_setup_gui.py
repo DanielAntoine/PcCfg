@@ -131,6 +131,23 @@ def parse_registry_int(raw_value: str | None) -> int | None:
         return None
 
 
+def parse_powercfg_indices(output: str) -> tuple[int | None, int | None]:
+    """Extract AC/DC powercfg setting indices from command output."""
+    ac_match = re.search(r"Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)", output)
+    dc_match = re.search(r"Current DC Power Setting Index:\s*0x([0-9a-fA-F]+)", output)
+    ac_value = int(ac_match.group(1), 16) if ac_match else None
+    dc_value = int(dc_match.group(1), 16) if dc_match else None
+    return ac_value, dc_value
+
+
+def status_tag(ok: bool) -> str:
+    return "Ok" if ok else "Not Ok"
+
+
+def format_status_line(label: str, value: str, ok: bool) -> str:
+    return f"{label:<28}: {value} [{status_tag(ok)}]"
+
+
 
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     """Parse JSON produced by PowerShell's ConvertTo-Json output."""
@@ -408,6 +425,12 @@ class MainWindow(QtWidgets.QWidget):
             self._append(f"[{marker}] {task.label}{suffix}")
         self._append()
 
+        self._append("APPLY option status")
+        self._append("-" * 60)
+        for line in self._build_apply_status_lines():
+            self._append(line)
+        self._append()
+
         if not is_windows():
             self._append("[ERROR] This tool is intended for Windows.")
             return
@@ -459,6 +482,160 @@ class MainWindow(QtWidgets.QWidget):
         else:
             self._append("GPU       : No NVIDIA/AMD/Blackmagic video card detected")
         self._append()
+
+
+    def _query_registry_dword(self, key_path: str, value_name: str) -> int | None:
+        _, output = run_command(f'reg query "{key_path}" /v {value_name}')
+        return parse_registry_int(parse_registry_value(output))
+
+    def _query_power_setting_indices(self, subgroup_guid: str, setting_guid: str) -> tuple[int | None, int | None]:
+        _, output = run_command(f"powercfg /query scheme_current {subgroup_guid} {setting_guid}")
+        return parse_powercfg_indices(output)
+
+    def _format_power_dual_status(
+        self,
+        label: str,
+        subgroup_guid: str,
+        setting_guid: str,
+        expected_ac: int,
+        expected_dc: int,
+        value_formatter: Callable[[int], str],
+    ) -> str:
+        ac_value, dc_value = self._query_power_setting_indices(subgroup_guid, setting_guid)
+        if ac_value is None or dc_value is None:
+            return format_status_line(label, "Unable to query", False)
+
+        display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
+        ok = ac_value == expected_ac and dc_value == expected_dc
+        return format_status_line(label, display, ok)
+
+    def _build_apply_status_lines(self) -> list[str]:
+        lines: list[str] = []
+
+        _, active_plan_out = run_command("powercfg /getactivescheme")
+        active_plan = parse_active_power_plan(active_plan_out)
+        high_perf_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+        active_line = compact_single_line(active_plan_out).lower()
+        active_ok = high_perf_guid in active_line or "high performance" in active_line
+        lines.append(format_status_line("Active power plan", active_plan, active_ok))
+
+        minutes = lambda value: f"{value} min"
+        lines.append(
+            self._format_power_dual_status(
+                "Sleep timeout",
+                "SUB_SLEEP",
+                "STANDBYIDLE",
+                expected_ac=0,
+                expected_dc=0,
+                value_formatter=minutes,
+            )
+        )
+        lines.append(
+            self._format_power_dual_status(
+                "Hibernate timeout",
+                "SUB_SLEEP",
+                "HIBERNATEIDLE",
+                expected_ac=0,
+                expected_dc=0,
+                value_formatter=minutes,
+            )
+        )
+        lines.append(
+            self._format_power_dual_status(
+                "Disk timeout",
+                "SUB_DISK",
+                "DISKIDLE",
+                expected_ac=0,
+                expected_dc=0,
+                value_formatter=minutes,
+            )
+        )
+        lines.append(
+            self._format_power_dual_status(
+                "Monitor timeout",
+                "SUB_VIDEO",
+                "VIDEOIDLE",
+                expected_ac=30,
+                expected_dc=30,
+                value_formatter=minutes,
+            )
+        )
+        lines.append(
+            self._format_power_dual_status(
+                "USB selective suspend",
+                "2a737441-1930-4402-8d77-b2bebba308a3",
+                "48e6b7a6-50f5-4782-a5d4-53bb8f07e226",
+                expected_ac=0,
+                expected_dc=0,
+                value_formatter=lambda value: "Disabled" if value == 0 else f"Enabled ({value})",
+            )
+        )
+
+        fast_startup = self._query_registry_dword(
+            "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
+            "HiberbootEnabled",
+        )
+        if fast_startup is None:
+            lines.append(format_status_line("Fast Startup", "Unable to query", False))
+        else:
+            lines.append(format_status_line("Fast Startup", "Disable" if fast_startup == 0 else "Enable", fast_startup == 0))
+
+        game_dvr_policy = self._query_registry_dword(
+            "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR",
+            "AllowGameDVR",
+        )
+        if game_dvr_policy is None:
+            lines.append(format_status_line("Policy: AllowGameDVR", "Unable to query", False))
+        else:
+            lines.append(format_status_line("Policy: AllowGameDVR", str(game_dvr_policy), game_dvr_policy == 0))
+
+        visual_fx = self._query_registry_dword(
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects",
+            "VisualFXSetting",
+        )
+        if visual_fx is None:
+            lines.append(format_status_line("Visual effects", "Unable to query", False))
+        else:
+            lines.append(format_status_line("Visual effects", str(visual_fx), visual_fx == 2))
+
+        thumbnails = self._query_registry_dword(
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
+            "IconsOnly",
+        )
+        if thumbnails is None:
+            lines.append(format_status_line("Thumbnail previews", "Unable to query", False))
+        else:
+            lines.append(format_status_line("Thumbnail previews", "Enabled" if thumbnails == 0 else "Disabled", thumbnails == 0))
+
+        toast_enabled = self._query_registry_dword(
+            "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications",
+            "ToastEnabled",
+        )
+        if toast_enabled is None:
+            lines.append(format_status_line("Toast notifications", "Unable to query", False))
+        else:
+            lines.append(format_status_line("Toast notifications", "Disabled" if toast_enabled == 0 else "Enabled", toast_enabled == 0))
+
+        notification_center = self._query_registry_dword(
+            "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
+            "DisableNotificationCenter",
+        )
+        if notification_center is None:
+            lines.append(format_status_line("Notification Center", "Unable to query", False))
+        else:
+            lines.append(
+                format_status_line(
+                    "Notification Center",
+                    "Disabled" if notification_center == 1 else "Enabled",
+                    notification_center == 1,
+                )
+            )
+
+        target_name = self.rename_input.text().strip()
+        if target_name:
+            current_name = os.environ.get("COMPUTERNAME", "Unknown")
+            lines.append(format_status_line("Rename computer", f"Current={current_name}, Target={target_name}", current_name.lower() == target_name.lower()))
+        return lines
 
     def run_apply(self) -> None:
         self._append("=== DXM PC Setup (APPLY) ===")
