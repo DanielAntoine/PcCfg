@@ -156,6 +156,11 @@ def format_status_line(label: str, value: str, ok: bool) -> str:
     return f"{label:<28}: {value} [{status_tag(ok)}]"
 
 
+def format_kv_line(label: str, value: str, width: int = 10) -> str:
+    """Format label/value output with aligned colons for readability."""
+    return f"{label:<{width}}: {value}"
+
+
 def readable_timeout_seconds(seconds: int) -> str:
     """Format powercfg timeout values (reported in seconds) for display."""
     if seconds == 0:
@@ -479,8 +484,8 @@ class MainWindow(QtWidgets.QWidget):
         self._append("=" * 60)
         self._append(f"{APP_NAME} - INSPECT REPORT")
         self._append("=" * 60)
-        self._append(f"Time      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self._append(f"Computer  : {os.environ.get('COMPUTERNAME', 'Unknown')}")
+        self._append(format_kv_line("Time", datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+        self._append(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
         self._append()
         self._append("APPLY option status")
         self._append("-" * 60)
@@ -500,20 +505,20 @@ class MainWindow(QtWidgets.QWidget):
         if code == 0:
             self._append("System")
             self._append("-" * 60)
-            self._append(f"OS        : {compact_single_line(os_name)}")
-            self._append(f"Version   : {compact_single_line(os_ver)}")
-            self._append(f"Build     : {compact_single_line(os_build)}")
+            self._append(format_kv_line("OS", compact_single_line(os_name)))
+            self._append(format_kv_line("Version", compact_single_line(os_ver)))
+            self._append(format_kv_line("Build", compact_single_line(os_build)))
             ubr_value = parse_registry_int(parse_registry_value(os_ubr))
             display_value = parse_registry_value(os_display)
             if display_value:
-                self._append(f"Release   : {display_value}")
+                self._append(format_kv_line("Release", display_value))
             current_full_build = "Unknown"
             if ubr_value is not None:
                 current_full_build = f"{compact_single_line(os_build)}.{ubr_value}"
-                self._append(f"Full build: {current_full_build}")
+                self._append(format_kv_line("Full build", current_full_build))
         else:
-            self._append("OS        : unable to query")
-        self._append(f"Admin     : {'YES' if is_admin() else 'NO'}")
+            self._append(format_kv_line("OS", "unable to query"))
+        self._append(format_kv_line("Admin", 'YES' if is_admin() else 'NO'))
         self._append()
 
         self._append("Target video cards (NVIDIA / AMD / Blackmagic)")
@@ -525,19 +530,19 @@ class MainWindow(QtWidgets.QWidget):
         _, gpu_out = run_command(gpu_cmd)
         gpus = [gpu for gpu in parse_json_payload(gpu_out) if is_target_video_device(str(gpu.get("Name", "")), str(gpu.get("PNPDeviceID", "")))]
         if gpus:
-            self._append(f"Found     : {len(gpus)} matching device(s)")
+            self._append(format_kv_line("Found", f"{len(gpus)} matching device(s)"))
             for gpu in gpus:
                 name = str(gpu.get("Name", "Unknown")).strip() or "Unknown"
                 version = str(gpu.get("DriverVersion", "Unknown")).strip() or "Unknown"
                 date = format_driver_date(str(gpu.get("DriverDate", "")))
                 vendor = guess_gpu_vendor(name)
                 lookup = get_vendor_driver_lookup_hint(vendor)
-                self._append(f"GPU       : {name}")
-                self._append(f"  Driver  : {version}")
-                self._append(f"  Date    : {date}")
-                self._append(f"  Latest  : check {vendor} site -> {lookup}")
+                self._append(format_kv_line("GPU", name))
+                self._append(format_kv_line("  Driver", version))
+                self._append(format_kv_line("  Date", date))
+                self._append(format_kv_line("  Latest", f"check {vendor} site -> {lookup}"))
         else:
-            self._append("GPU       : No NVIDIA/AMD/Blackmagic video card detected")
+            self._append(format_kv_line("GPU", "No NVIDIA/AMD/Blackmagic video card detected"))
         self._append()
 
 
@@ -706,8 +711,8 @@ class MainWindow(QtWidgets.QWidget):
 
     def run_apply(self) -> None:
         self._append("=== DXM PC Setup (APPLY) ===")
-        self._append(f"Time: {datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        self._append(f"Computer: {os.environ.get('COMPUTERNAME', 'Unknown')}")
+        self._append(format_kv_line("Time", datetime.now().strftime('%Y%m%d_%H%M%S')))
+        self._append(format_kv_line("Computer", os.environ.get('COMPUTERNAME', 'Unknown')))
         self._append()
 
         if not is_windows():
