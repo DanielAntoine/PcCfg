@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Sequence, overload
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 
 APP_VERSION = "1.0.0"
@@ -41,6 +41,14 @@ class InstallApp:
     label: str
     winget_id: str
     category: str
+
+
+@dataclass
+class ManualInstallApp:
+    key: str
+    label: str
+    category: str
+    website_url: str
 
 
 @dataclass
@@ -839,6 +847,7 @@ class MainWindow(QtWidgets.QWidget):
         self.apply_tasks = self._build_tasks()
         self.task_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
         self.install_apps = self._build_install_apps()
+        self.manual_install_apps = self._build_manual_install_apps()
         self.app_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
         self.rename_input = QtWidgets.QLineEdit()
         self.rename_input.setPlaceholderText("New computer name")
@@ -877,6 +886,29 @@ class MainWindow(QtWidgets.QWidget):
             self.apps_layout.addWidget(cb)
         self.apps_layout.addStretch(1)
 
+        self.manual_group = QtWidgets.QGroupBox("Manual install")
+        self.manual_layout = QtWidgets.QVBoxLayout(self.manual_group)
+        current_manual_category: str | None = None
+        for manual_app in self.manual_install_apps:
+            if manual_app.category != current_manual_category:
+                current_manual_category = manual_app.category
+                category_label = QtWidgets.QLabel(current_manual_category)
+                font = category_label.font()
+                font.setBold(True)
+                category_label.setFont(font)
+                self.manual_layout.addWidget(category_label)
+
+            app_row = QtWidgets.QHBoxLayout()
+            app_row.addWidget(QtWidgets.QLabel(manual_app.label), stretch=1)
+
+            open_button = QtWidgets.QPushButton("Open website")
+            open_button.clicked.connect(
+                lambda _checked=False, app=manual_app: self._open_manual_install_link(app.label, app.website_url)
+            )
+            app_row.addWidget(open_button)
+            self.manual_layout.addLayout(app_row)
+        self.manual_layout.addStretch(1)
+
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.addWidget(self.inspect_button)
         btn_row.addWidget(self.run_button)
@@ -896,8 +928,12 @@ class MainWindow(QtWidgets.QWidget):
         left_column.addWidget(self.output)
         left_column.addLayout(bottom_row)
 
+        right_column = QtWidgets.QHBoxLayout()
+        right_column.addWidget(self.apps_group, stretch=1)
+        right_column.addWidget(self.manual_group, stretch=1)
+
         layout.addLayout(left_column, stretch=3)
-        layout.addWidget(self.apps_group, stretch=1)
+        layout.addLayout(right_column, stretch=2)
 
         self.select_all_checkbox.stateChanged.connect(self._toggle_all)
         self.inspect_button.clicked.connect(self._run_inspect)
@@ -1015,7 +1051,6 @@ class MainWindow(QtWidgets.QWidget):
         return [
 
             InstallApp("chrome", "Google Chrome", "Google.Chrome", "Utilities for creators"),
-            InstallApp("davinci_resolve", "DaVinci Resolve", "BlackmagicDesign.DaVinciResolve", "Core video editing / post"),
             InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post"),
             InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post"),
             InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake", "Core video editing / post"),
@@ -1037,6 +1072,28 @@ class MainWindow(QtWidgets.QWidget):
             InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
         ]
 
+
+    def _build_manual_install_apps(self) -> list[ManualInstallApp]:
+        return [
+            ManualInstallApp(
+                "davinci_resolve",
+                "DaVinci Resolve",
+                "Video editing / color grading",
+                "https://www.blackmagicdesign.com/products/davinciresolve",
+            ),
+            ManualInstallApp(
+                "blackmagic_desktop_video",
+                "Blackmagic Desktop Video",
+                "Capture card drivers / tools",
+                "https://www.blackmagicdesign.com/support/family/capture-and-playback",
+            ),
+        ]
+
+    def _open_manual_install_link(self, app_label: str, url: str) -> None:
+        opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        if not opened:
+            self._append(f"[WARN] Unable to open {app_label} website: {url}")
+
     def _append(self, text: str = "") -> None:
         self.output.appendPlainText(text)
         self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
@@ -1055,6 +1112,7 @@ class MainWindow(QtWidgets.QWidget):
         self.select_all_checkbox.setEnabled(not running)
         self.tasks_group.setEnabled(not running)
         self.apps_group.setEnabled(not running)
+        self.manual_group.setEnabled(not running)
         self.save_report_button.setEnabled(not running)
 
     def _start_worker(self, worker: SetupWorker) -> None:
