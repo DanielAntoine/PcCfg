@@ -19,8 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 from PyQt5 import QtCore, QtWidgets
 
@@ -132,32 +130,6 @@ def parse_registry_int(raw_value: str | None) -> int | None:
     except ValueError:
         return None
 
-
-def status_tag(is_ok: bool) -> str:
-    return "Ok" if is_ok else "Not Ok"
-
-
-def fetch_url_text(url: str, timeout: int = 8) -> str:
-    """Best-effort helper to fetch UTF-8 text from a URL."""
-    req = Request(url, headers={"User-Agent": "DXM-PC-Setup/1.0"})
-    with urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="ignore")
-
-
-def get_latest_windows_11_build_from_web() -> str:
-    """Get latest public Windows 11 build from Microsoft's release health page."""
-    url = "https://learn.microsoft.com/en-us/windows/release-health/windows11-release-information"
-    try:
-        html = fetch_url_text(url)
-    except (URLError, TimeoutError, OSError):
-        return "Unable to query"
-
-    matches = re.findall(r"(?:OS\s*)?Build\s*([0-9]{5}\.[0-9]+)", html, flags=re.IGNORECASE)
-    if not matches:
-        return "Unable to parse"
-
-    latest = max(matches, key=lambda v: tuple(int(p) for p in v.split(".")))
-    return latest
 
 
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
@@ -448,15 +420,6 @@ class MainWindow(QtWidgets.QWidget):
             if ubr_value is not None:
                 current_full_build = f"{compact_single_line(os_build)}.{ubr_value}"
                 self._append(f"Full build: {current_full_build}")
-            latest_build = get_latest_windows_11_build_from_web()
-            self._append(f"Latest Win11 build (web): {latest_build}")
-            if current_full_build != "Unknown" and re.match(r"^\d+\.\d+$", latest_build):
-                current_tuple = tuple(int(p) for p in current_full_build.split("."))
-                latest_tuple = tuple(int(p) for p in latest_build.split("."))
-                windows_ok = current_tuple >= latest_tuple
-                self._append(f"Windows status: {'Up to date' if windows_ok else 'Update available'} [{status_tag(windows_ok)}]")
-            else:
-                self._append("Windows status: Unable to compare [Not Ok]")
         else:
             self._append("OS        : unable to query")
         self._append(f"Admin     : {'YES' if is_admin() else 'NO'}")
