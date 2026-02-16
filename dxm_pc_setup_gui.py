@@ -26,187 +26,31 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
-CHECKLIST_LOG_FILE = Path(__file__).resolve().with_name("installation_checklist_log.json")
-CHECKLIST_TASK_MAX_LEN = 52
 CHECKLIST_WRAP_LINE_LEN = 64
 STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING")
 
-CHECKLIST_INFO_FIELD_TYPES: dict[str, str] = {
-    "Client name": "text",
-    "Computer role": "text",
-    "Numbering00 (e.g., 01, 02, 03)": "numbering",
-    "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}": "text",
-    "Inventory ID": "text",
-    "Technician": "text",
-    "Date": "date",
-    "Installed cards: BMD / 10GbE / others": "text",
-    "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg": "text",
-    "Validation: Device Manager = 0 unknown devices": "text",
-    "Record ScreenConnect ID": "text",
-}
+from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
+from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
+from pccfg.domain.checklist import (
+    CHECKLIST_FIELDS,
+    CHECKLIST_LOG_FILE,
+    CHECKLIST_TASK_MAX_LEN,
+    FIELD_IDS_BY_LABEL,
+    FIELDS_BY_ID,
+    ITEM_IDS_BY_LABEL,
+    ITEM_LABELS_BY_ID,
+    SECTIONS,
+)
+from pccfg.domain.models import ApplyTask, ExecutionStep, InstallApp, ManualInstallApp
+from pccfg.services.checklist_store import load_checklist_state, save_checklist_state
 
-CLIENT_NAME_FIELD = "Client name"
-COMPUTER_ROLE_FIELD = "Computer role"
-NUMBERING_FIELD = "Numbering00 (e.g., 01, 02, 03)"
-HOSTNAME_FIELD = "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}"
-INVENTORY_ID_FIELD = "Inventory ID"
-DATE_FIELD = "Date"
-FILE_NAME_FIELD = "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg"
-
-
-INSTALLATION_PC_CHECKLIST: list[tuple[str, list[str]]] = [
-    (
-        "0) Workstation information",
-        [
-            "Client name",
-            "Computer role",
-            "Numbering00 (e.g., 01, 02, 03)",
-            "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}",
-            "Inventory ID",
-            "Technician",
-            "Date",
-            "Installed cards: BMD / 10GbE / others",
-        ],
-    ),
-    (
-        "1) Evidence / Photos",
-        [
-            "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg",
-            "Attach photos to the client inventory record or the ticket",
-        ],
-    ),
-    (
-        "2) Physical inspection",
-        [
-            "Open the case + take UNBOX photos",
-            "Verify components against invoice (RAM/SSD/GPU/cards)",
-            "Check cables (nothing in fans / nothing loose)",
-        ],
-    ),
-    ("3) Initial boot", ["Start the PC", "Check that all fans spin (CPU/GPU/case)"]),
-    (
-        "4) BIOS / UEFI",
-        [
-            "Update BIOS (version before/after)",
-            "Enable 4G Decoding",
-            "Enable Resizable BAR support (ReBAR)",
-            "Boot in UEFI mode (CSM OFF)",
-            "Enable XMP / EXPO",
-            "Save settings / reboot",
-        ],
-    ),
-    (
-        "5) Windows Update + Drivers",
-        [
-            "Rename the PC ({ClientNamePascal}-{Role2LUpper}-{numbering00})",
-            "Run Windows Update until \"Up to date\"",
-            "Install chipset drivers",
-            "Install network drivers (LAN/10GbE/Wi-Fi)",
-            "Install GPU drivers (NVIDIA/AMD)",
-            "Install audio drivers",
-            "Install Blackmagic Desktop Video (if card is present)",
-            "Install other card drivers (USB/RAID/etc)",
-            "Validation: Device Manager = 0 unknown devices",
-        ],
-    ),
-    (
-        "6) GPU NVIDIA",
-        [
-            "NVIDIA Control Panel > Power management mode > Prefer maximum performance",
-        ],
-    ),
-    (
-        "7) Cleanup (manual)",
-        [
-            "Remove bloatware",
-            "Check startup apps (Task Manager > Startup)",
-        ],
-    ),
-    (
-        "8) Power / Sleep / Fast Startup",
-        [
-            "Power plan: Performance (High performance)",
-            "Sleep: Never (AC)",
-            "Hibernate: Off",
-            "Disk sleep: Never",
-            "Monitor timeout: 30 min",
-            "Disable Fast Startup",
-        ],
-    ),
-    ("9) Game Bar / Game DVR", ["Disable Game Bar / Game DVR"]),
-    (
-        "10) Performance options",
-        ["Enable Best performance + keep thumbnails"],
-    ),
-    ("11) Notifications", ["Disable Windows notifications (current user)"]),
-    ("12) Disks", ["Ensure all disks are visible"]),
-    (
-        "13) Network & support",
-        [
-            "Test USB ports",
-            "Test Wi-Fi",
-            "Install ScreenConnect",
-            "Test remote connection",
-            "Record ScreenConnect ID",
-            "Passwords and keys stored in Vault",
-        ],
-    ),
-    (
-        "14) Software (client-provided)",
-        [
-            "Install according to client list",
-            "Test critical apps",
-        ],
-    ),
-    (
-        "15) Capture card validation",
-        [
-            "Test I/O via Blackmagic Media Express",
-            "Test in vMix (if required)",
-            "Test StreamDeck in vMix (if required)",
-        ],
-    ),
-    (
-        "16) Repack / InstaPak",
-        [
-            "Photo PACK_BEFORE_001",
-            "Insert InstaPak, close case, wait for foam expansion",
-            "Photo PACK_AFTER_001",
-            "Remove InstaPak to verify the client can remove it",
-            "Reinsert InstaPak + close + final packaging",
-        ],
-    ),
-]
-
-
-@dataclass
-class ApplyTask:
-    key: str
-    label: str
-    action: Callable[[], list[list[str]]]
-
-
-@dataclass
-class InstallApp:
-    key: str
-    label: str
-    winget_id: str
-    category: str
-
-
-@dataclass
-class ManualInstallApp:
-    key: str
-    label: str
-    category: str
-    website_url: str
-
-
-@dataclass
-class ExecutionStep:
-    label: str
-    commands: list[list[str]]
-
+CLIENT_NAME_FIELD_ID = "client_name"
+COMPUTER_ROLE_FIELD_ID = "computer_role"
+NUMBERING_FIELD_ID = "numbering"
+HOSTNAME_FIELD_ID = "hostname"
+INVENTORY_ID_FIELD_ID = "inventory_id"
+DATE_FIELD_ID = "date"
+FILE_NAME_FIELD_ID = "file_name"
 
 COMMAND_CANCEL_EXIT_CODE = -9
 COMMAND_TIMEOUT_EXIT_CODE = -124
@@ -1273,12 +1117,12 @@ class MainWindow(QtWidgets.QWidget):
         self._is_autofilling_checklist_info = False
         self._last_autofill_values: dict[str, str] = {}
         self.installation_checklist_items: list[QtWidgets.QTreeWidgetItem] = []
-        self.checklist_item_by_label: dict[str, QtWidgets.QTreeWidgetItem] = {}
+        self.checklist_item_by_id: dict[str, QtWidgets.QTreeWidgetItem] = {}
         self.checklist_status_chips: dict[str, QtWidgets.QLabel] = {}
         self.checklist_runtime_status: dict[str, tuple[str, str]] = {}
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
-        for section_label, section_items in INSTALLATION_PC_CHECKLIST:
-            section_header = QtWidgets.QTreeWidgetItem([section_label, "", ""])
+        for section in SECTIONS:
+            section_header = QtWidgets.QTreeWidgetItem([section.label, "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
             section_header.setFirstColumnSpanned(True)
             section_font = section_header.font(0)
@@ -1286,55 +1130,55 @@ class MainWindow(QtWidgets.QWidget):
             section_header.setFont(0, section_font)
             self.installation_checklist_tree.addTopLevelItem(section_header)
 
-            for item_label in section_items:
-                wrapped_label = wrap_task_label(item_label)
+            for section_item in section.items:
+                wrapped_label = wrap_task_label(section_item.label)
                 checklist_item = QtWidgets.QTreeWidgetItem([wrapped_label, "", ""])
                 checklist_item.setFlags(checklist_item.flags() | QtCore.Qt.ItemIsUserCheckable)
                 checklist_item.setCheckState(0, QtCore.Qt.Unchecked)
-                checklist_item.setData(0, QtCore.Qt.UserRole, item_label)
-                checklist_item.setToolTip(0, item_label)
+                checklist_item.setData(0, QtCore.Qt.UserRole, section_item.item_id)
+                checklist_item.setToolTip(0, section_item.label)
                 self.installation_checklist_tree.addTopLevelItem(checklist_item)
                 self.installation_checklist_items.append(checklist_item)
-                self.checklist_item_by_label[item_label] = checklist_item
+                self.checklist_item_by_id[section_item.item_id] = checklist_item
 
                 status_chip = QtWidgets.QLabel("PENDING")
                 status_chip.setObjectName("checklistStatusChip")
                 status_chip.setProperty("chipStatus", "PENDING")
                 status_chip.setAlignment(QtCore.Qt.AlignCenter)
                 self.installation_checklist_tree.setItemWidget(checklist_item, 1, status_chip)
-                self.checklist_status_chips[item_label] = status_chip
-                self.checklist_runtime_status[item_label] = ("PENDING", "Waiting")
+                self.checklist_status_chips[section_item.item_id] = status_chip
+                self.checklist_runtime_status[section_item.item_id] = ("PENDING", "Waiting")
 
-                field_type = CHECKLIST_INFO_FIELD_TYPES.get(item_label)
-                if field_type is None:
+                field = FIELDS_BY_ID.get(section_item.item_id)
+                if field is None:
                     continue
 
-                if field_type == "date":
+                if field.field_type == "date":
                     value_input = QtWidgets.QDateEdit()
                     value_input.setDisplayFormat("yyyy-MM-dd")
                     value_input.setCalendarPopup(True)
                     value_input.setDate(QtCore.QDate.currentDate())
                     value_input.dateChanged.connect(
-                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
                     )
-                elif field_type == "numbering":
+                elif field.field_type == "numbering":
                     value_input = QtWidgets.QComboBox()
                     value_input.addItems([f"{number:02d}" for number in range(1, 100)])
                     value_input.currentTextChanged.connect(
-                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
                     )
                 else:
                     value_input = QtWidgets.QLineEdit()
                     value_input.setPlaceholderText("Add details")
-                    if item_label == HOSTNAME_FIELD:
+                    if field.field_id == HOSTNAME_FIELD_ID:
                         value_input.setReadOnly(True)
                         value_input.setPlaceholderText("Auto-generated")
                     value_input.textChanged.connect(
-                        lambda _value, label=item_label: self._on_checklist_info_field_changed(label)
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
                     )
 
                 self.installation_checklist_tree.setItemWidget(checklist_item, 2, value_input)
-                self.checklist_info_inputs[item_label] = value_input
+                self.checklist_info_inputs[field.field_id] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
@@ -1388,12 +1232,12 @@ class MainWindow(QtWidgets.QWidget):
 
     def _on_installation_checklist_item_changed(self, _item: QtWidgets.QTreeWidgetItem | None = None, _column: int = 0) -> None:
         if _item is not None and _column == 0:
-            task_label = _item.data(0, QtCore.Qt.UserRole)
-            if isinstance(task_label, str) and task_label:
+            task_id = _item.data(0, QtCore.Qt.UserRole)
+            if isinstance(task_id, str) and task_id:
                 if _item.checkState(0) == QtCore.Qt.Checked:
-                    self._set_checklist_item_status(task_label, "PASS", "Checked")
-                elif self.checklist_runtime_status.get(task_label, ("", ""))[0] in {"PASS", "PENDING"}:
-                    self._set_checklist_item_status(task_label, "PENDING", "Waiting")
+                    self._set_checklist_item_status(task_id, "PASS", "Checked")
+                elif self.checklist_runtime_status.get(task_id, ("", ""))[0] in {"PASS", "PENDING"}:
+                    self._set_checklist_item_status(task_id, "PENDING", "Waiting")
 
         self._update_installation_checklist_progress()
         if self._is_loading_checklist_state:
@@ -1415,43 +1259,45 @@ class MainWindow(QtWidgets.QWidget):
             self.checklist_status_bar.setText("Ready")
             return
 
-        full_text = item.data(0, QtCore.Qt.UserRole)
-        if not isinstance(full_text, str) or not full_text:
-            full_text = item.text(0)
-        runtime_state = self.checklist_runtime_status.get(full_text, ("PENDING", "Waiting"))
-        self.checklist_status_bar.setText(f"{full_text} [{runtime_state[0]}] - {runtime_state[1]}")
+        task_id = item.data(0, QtCore.Qt.UserRole)
+        if not isinstance(task_id, str) or not task_id:
+            self.checklist_status_bar.setText(item.text(0))
+            return
+        task_label = ITEM_LABELS_BY_ID.get(task_id, task_id)
+        runtime_state = self.checklist_runtime_status.get(task_id, ("PENDING", "Waiting"))
+        self.checklist_status_bar.setText(f"{task_label} [{runtime_state[0]}] - {runtime_state[1]}")
 
-    def _on_checklist_info_field_changed(self, field_label: str) -> None:
+    def _on_checklist_info_field_changed(self, field_id: str) -> None:
         if self._is_loading_checklist_state:
             return
 
         source_fields = {
-            CLIENT_NAME_FIELD,
-            COMPUTER_ROLE_FIELD,
-            NUMBERING_FIELD,
-            INVENTORY_ID_FIELD,
-            DATE_FIELD,
+            CLIENT_NAME_FIELD_ID,
+            COMPUTER_ROLE_FIELD_ID,
+            NUMBERING_FIELD_ID,
+            INVENTORY_ID_FIELD_ID,
+            DATE_FIELD_ID,
         }
-        if field_label in source_fields and not self._is_autofilling_checklist_info:
+        if field_id in source_fields and not self._is_autofilling_checklist_info:
             self._apply_checklist_autofill()
 
-        if field_label == HOSTNAME_FIELD:
-            self.rename_input.setText(self._get_checklist_info_text(HOSTNAME_FIELD))
+        if field_id == HOSTNAME_FIELD_ID:
+            self.rename_input.setText(self._get_checklist_info_text(HOSTNAME_FIELD_ID))
 
         self._save_installation_checklist_state()
 
     def _apply_checklist_autofill(self) -> None:
         hostname_text = self._build_hostname_value()
         file_name_text = self._build_file_name_value()
-        self._autofill_line_edit(HOSTNAME_FIELD, hostname_text)
-        self._autofill_line_edit(FILE_NAME_FIELD, file_name_text)
+        self._autofill_line_edit(HOSTNAME_FIELD_ID, hostname_text)
+        self._autofill_line_edit(FILE_NAME_FIELD_ID, file_name_text)
         self.rename_input.setText(hostname_text)
 
-    def _set_checklist_item_status(self, task_label: str, status: str, detail: str) -> None:
+    def _set_checklist_item_status(self, task_id: str, status: str, detail: str) -> None:
         if status not in STATUS_CHIP_STATES:
             status = "PENDING"
 
-        chip = self.checklist_status_chips.get(task_label)
+        chip = self.checklist_status_chips.get(task_id)
         if chip is not None:
             chip.setText(status)
             chip.setProperty("chipStatus", status)
@@ -1459,14 +1305,15 @@ class MainWindow(QtWidgets.QWidget):
             chip.style().polish(chip)
             chip.update()
 
-        self.checklist_runtime_status[task_label] = (status, detail)
+        self.checklist_runtime_status[task_id] = (status, detail)
 
     @QtCore.pyqtSlot(str, str, bool, str)
     def _on_inspect_checklist_status(self, task_label: str, status: str, should_check: bool, detail: str) -> None:
-        item = self.checklist_item_by_label.get(task_label)
+        task_id = ITEM_IDS_BY_LABEL.get(task_label, task_label)
+        item = self.checklist_item_by_id.get(task_id)
         if item is None:
             return
-        self._set_checklist_item_status(task_label, status, detail)
+        self._set_checklist_item_status(task_id, status, detail)
         if should_check and status == "PASS":
             item.setCheckState(0, QtCore.Qt.Checked)
         elif status == "FAIL":
@@ -1493,9 +1340,9 @@ class MainWindow(QtWidgets.QWidget):
         self._last_autofill_values[field_label] = proposed_value
 
     def _build_hostname_value(self) -> str:
-        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD))
-        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD)).upper()
-        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD))
+        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
+        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
+        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
 
         role_prefix = role_value[:2]
         hostname_parts = [part for part in [client_name, role_prefix, numbering_value] if part]
@@ -1520,13 +1367,13 @@ class MainWindow(QtWidgets.QWidget):
         return "".join(cls._to_alnum(word).capitalize() for word in words if word)
 
     def _build_file_name_value(self) -> str:
-        date_widget = self.checklist_info_inputs.get(DATE_FIELD)
+        date_widget = self.checklist_info_inputs.get(DATE_FIELD_ID)
         if isinstance(date_widget, QtWidgets.QDateEdit):
             date_value = date_widget.date().toString("yyyyMMdd")
         else:
             date_value = datetime.now().strftime("%Y%m%d")
 
-        inventory_id = self._get_checklist_info_text(INVENTORY_ID_FIELD)
+        inventory_id = self._get_checklist_info_text(INVENTORY_ID_FIELD_ID)
         main_parts = [part for part in [date_value, inventory_id] if part]
         base_name = "_".join(main_parts) if main_parts else date_value
         return f"{base_name}_Step_001.jpg"
@@ -1556,28 +1403,13 @@ class MainWindow(QtWidgets.QWidget):
             key: self._read_checklist_info_value(widget)
             for key, widget in self.checklist_info_inputs.items()
         }
-        payload = {
-            "updated_at": datetime.now().isoformat(),
-            "items": checklist_state,
-            "info": checklist_info,
-        }
-        CHECKLIST_LOG_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        save_checklist_state(CHECKLIST_LOG_FILE, checklist_state, checklist_info)
 
     def _load_installation_checklist_state(self) -> None:
-        if not CHECKLIST_LOG_FILE.exists():
-            return
-
         try:
-            payload = json.loads(CHECKLIST_LOG_FILE.read_text(encoding="utf-8"))
+            persisted_items, persisted_info = load_checklist_state(CHECKLIST_LOG_FILE)
         except (json.JSONDecodeError, OSError):
             return
-
-        persisted_items = payload.get("items")
-        if not isinstance(persisted_items, dict):
-            return
-        persisted_info = payload.get("info")
-        if not isinstance(persisted_info, dict):
-            persisted_info = {}
 
         self._is_loading_checklist_state = True
         try:
@@ -1591,7 +1423,7 @@ class MainWindow(QtWidgets.QWidget):
         finally:
             self._is_loading_checklist_state = False
 
-        for key in (HOSTNAME_FIELD, FILE_NAME_FIELD):
+        for key in (HOSTNAME_FIELD_ID, FILE_NAME_FIELD_ID):
             value = self._get_checklist_info_text(key)
             self._last_autofill_values[key] = value
 
@@ -1602,9 +1434,9 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 item.setCheckState(0, QtCore.Qt.Unchecked)
-                task_label = item.data(0, QtCore.Qt.UserRole)
-                if isinstance(task_label, str):
-                    self._set_checklist_item_status(task_label, "PENDING", "Waiting")
+                task_id = item.data(0, QtCore.Qt.UserRole)
+                if isinstance(task_id, str):
+                    self._set_checklist_item_status(task_id, "PENDING", "Waiting")
             for widget in self.checklist_info_inputs.values():
                 self._set_checklist_info_value(widget, "")
         finally:
@@ -1664,7 +1496,7 @@ class MainWindow(QtWidgets.QWidget):
         completed = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
 
         checklist_items_by_label = {
-            str(item.data(0, QtCore.Qt.UserRole)): item
+            ITEM_LABELS_BY_ID.get(str(item.data(0, QtCore.Qt.UserRole)), str(item.data(0, QtCore.Qt.UserRole))): item
             for item in self.installation_checklist_items
         }
 
@@ -1676,20 +1508,20 @@ class MainWindow(QtWidgets.QWidget):
             "Checklist info",
         ]
 
-        for field_label in CHECKLIST_INFO_FIELD_TYPES:
-            value = self._read_checklist_info_value(self.checklist_info_inputs[field_label])
-            lines.append(f"- {field_label}: {value or '-'}")
+        for field in CHECKLIST_FIELDS:
+            value = self._read_checklist_info_value(self.checklist_info_inputs[field.field_id])
+            lines.append(f"- {field.label}: {value or '-'}")
 
         lines.append("")
         lines.append("Checklist tasks")
-        for section_label, section_items in INSTALLATION_PC_CHECKLIST:
-            lines.append(section_label)
-            for item_label in section_items:
-                item = checklist_items_by_label.get(item_label)
+        for section in SECTIONS:
+            lines.append(section.label)
+            for section_item in section.items:
+                item = checklist_items_by_label.get(section_item.label)
                 if item is None:
                     continue
                 status = "[x]" if item.checkState(0) == QtCore.Qt.Checked else "[ ]"
-                lines.append(f"  {status} {item_label}")
+                lines.append(f"  {status} {section_item.label}")
             lines.append("")
 
         default_name = f"installation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -1737,136 +1569,28 @@ class MainWindow(QtWidgets.QWidget):
             widget.setDate(parsed_date if parsed_date.isValid() else QtCore.QDate.currentDate())
 
     def _build_tasks(self) -> list[ApplyTask]:
-        return [
+        tasks = [
             ApplyTask(
-                key="power_plan",
-                label="Set power plan to High performance",
-                action=lambda: [["powercfg", "/setactive", "SCHEME_MIN"]],
-            ),
-            ApplyTask(
-                key="power_timeouts",
-                label="Configure timeouts (Sleep/Hibernate/Disk=Never, Monitor=30m)",
-                action=lambda: [
-                    ["powercfg", "/hibernate", "off"],
-                    ["powercfg", "/change", "standby-timeout-ac", "0"],
-                    ["powercfg", "/change", "standby-timeout-dc", "0"],
-                    ["powercfg", "/change", "hibernate-timeout-ac", "0"],
-                    ["powercfg", "/change", "hibernate-timeout-dc", "0"],
-                    ["powercfg", "/change", "disk-timeout-ac", "0"],
-                    ["powercfg", "/change", "disk-timeout-dc", "0"],
-                    ["powercfg", "/change", "monitor-timeout-ac", "30"],
-                    ["powercfg", "/change", "monitor-timeout-dc", "30"],
-                ],
-            ),
-            ApplyTask(
-                key="usb_suspend",
-                label="Disable USB selective suspend (AC/DC)",
-                action=lambda: [
-                    ["powercfg", "/setacvalueindex", "SCHEME_MIN", "2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "0"],
-                    ["powercfg", "/setdcvalueindex", "SCHEME_MIN", "2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "0"],
-                    ["powercfg", "/setactive", "SCHEME_MIN"],
-                ],
-            ),
-            ApplyTask(
-                key="fast_startup",
-                label="Disable Fast Startup",
-                action=lambda: [
-                    ["reg", "add", "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power", "/v", "HiberbootEnabled", "/t", "REG_DWORD", "/d", "0", "/f"]
-                ],
-            ),
-            ApplyTask(
-                key="game_dvr",
-                label="Disable Game Bar / Game DVR",
-                action=lambda: [
-                    ["reg", "add", "HKCU\\System\\GameConfigStore", "/v", "GameDVR_Enabled", "/t", "REG_DWORD", "/d", "0", "/f"],
-                    ["reg", "add", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "/v", "AppCaptureEnabled", "/t", "REG_DWORD", "/d", "0", "/f"],
-                    ["reg", "add", "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR", "/v", "AllowGameDVR", "/t", "REG_DWORD", "/d", "0", "/f"],
-                ],
-            ),
-            ApplyTask(
-                key="visual_effects",
-                label="Set visual effects (best performance, keep thumbnails)",
-                action=lambda: [
-                    ["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects", "/v", "VisualFXSetting", "/t", "REG_DWORD", "/d", "2", "/f"],
-                    ["reg", "add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "/v", "IconsOnly", "/t", "REG_DWORD", "/d", "0", "/f"],
-                ],
-            ),
-            ApplyTask(
-                key="notifications",
-                label="Disable Windows notifications (current user)",
-                action=lambda: [
-                    ["reg", "add", "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications", "/v", "ToastEnabled", "/t", "REG_DWORD", "/d", "0", "/f"],
-                    ["reg", "add", "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "/v", "DisableNotificationCenter", "/t", "REG_DWORD", "/d", "1", "/f"],
-                ],
-            ),
+                key=definition.key,
+                label=definition.label,
+                action=lambda commands=definition.commands: [list(command) for command in commands],
+            )
+            for definition in APPLY_TASK_DEFINITIONS
+        ]
+        tasks.append(
             ApplyTask(
                 key="rename_pc",
                 label="Rename computer",
                 action=self._rename_computer_action,
-            ),
-        ]
+            )
+        )
+        return tasks
 
     def _build_install_apps(self) -> list[InstallApp]:
-        return [
-
-            InstallApp("chrome", "Google Chrome", "Google.Chrome", "Utilities for creators"),
-            InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post"),
-            InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post"),
-            InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake", "Core video editing / post"),
-            InstallApp("avidemux", "Avidemux", "Avidemux.Avidemux", "Core video editing / post"),
-            InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio", "Capture / streaming / recording"),
-            InstallApp("sharex", "ShareX", "ShareX.ShareX", "Capture / streaming / recording"),
-            InstallApp("audacity", "Audacity", "Audacity.Audacity", "Audio for video"),
-            InstallApp("reaper", "REAPER", "Cockos.REAPER", "Audio for video"),
-            InstallApp("vlc", "VLC media player", "VideoLAN.VLC", "Codecs / media tools"),
-            InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg", "Codecs / media tools"),
-            InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI", "Codecs / media tools"),
-            InstallApp("mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix", "Codecs / media tools"),
-            InstallApp("blender", "Blender", "BlenderFoundation.Blender", "Motion graphics / VFX / 3D"),
-            InstallApp("natron", "Natron", "Natron.Natron", "Motion graphics / VFX / 3D"),
-            InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++", "Utilities for creators"),
-            InstallApp("seven_zip", "7-Zip", "7zip.7zip", "Utilities for creators"),
-            InstallApp("everything", "Everything", "voidtools.Everything", "Utilities for creators"),
-            InstallApp("crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo", "Utilities for creators"),
-            InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
-            InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support"),
-            InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support"),
-        ]
-
+        return list(INSTALL_APPS)
 
     def _build_manual_install_apps(self) -> list[ManualInstallApp]:
-        return [
-            ManualInstallApp(
-                "davinci_resolve",
-                "DaVinci Resolve",
-                "Video editing / color grading",
-                "https://www.blackmagicdesign.com/products/davinciresolve",
-            ),
-            ManualInstallApp(
-                "blackmagic_desktop_video",
-                "Blackmagic Desktop Video",
-                "Capture card drivers / tools",
-                "https://www.blackmagicdesign.com/support/family/capture-and-playback",
-            ),
-            ManualInstallApp(
-                "screenconnect_host_access",
-                "ScreenConnect Host Access",
-                "Remote support",
-                "https://dxmtechnologie.screenconnect.com/Host#Access",
-            ),
-            ManualInstallApp(
-                "creative_cloud",
-                "Adobe Creative Cloud",
-                "Video editing / color grading",
-                "https://creativecloud.adobe.com/apps/download/creative-cloud",
-            ),
-            ManualInstallApp(
-                "vmix",
-                "vMix",
-                "Live production / streaming",
-                "https://www.vmix.com/software/download.aspx",
-            ),
-        ]
+        return list(MANUAL_INSTALL_APPS)
 
     def _open_manual_install_link(self, app_label: str, url: str) -> None:
         opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
