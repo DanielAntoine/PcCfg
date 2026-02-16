@@ -11,6 +11,7 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -65,6 +66,37 @@ def load_stylesheet() -> str:
     if not stylesheet_path.exists():
         return ""
     return stylesheet_path.read_text(encoding="utf-8")
+
+
+def compact_single_line(output: str) -> str:
+    """Normalize command output into a readable single line."""
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    return " | ".join(lines)
+
+
+def parse_registry_value(output: str) -> str | None:
+    """Extract the value payload from `reg query` output."""
+    for raw_line in reversed(output.splitlines()):
+        line = raw_line.strip()
+        if not line or line.upper().startswith("HKEY"):
+            continue
+        parts = re.split(r"\s{2,}", line)
+        if len(parts) >= 3:
+            return parts[2]
+    return None
+
+
+def parse_active_power_plan(output: str) -> str:
+    """Extract user-friendly active power plan details."""
+    line = compact_single_line(output)
+    if not line:
+        return "Unable to query"
+    plan_name_match = re.search(r"\(([^)]+)\)", line)
+    guid_match = re.search(r"([0-9a-fA-F\-]{36})", line)
+    plan_name = plan_name_match.group(1) if plan_name_match else "Unknown"
+    if guid_match:
+        return f"{plan_name} [{guid_match.group(1)}]"
+    return plan_name
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -219,9 +251,11 @@ class MainWindow(QtWidgets.QWidget):
             self.run_button.setEnabled(True)
 
     def run_inspect(self) -> None:
-        self._append(f"=== {APP_NAME} (INSPECT) ===")
-        self._append(f"Time: {datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        self._append(f"Computer: {os.environ.get('COMPUTERNAME', 'Unknown')}")
+        self._append("=" * 60)
+        self._append(f"{APP_NAME} - INSPECT REPORT")
+        self._append("=" * 60)
+        self._append(f"Time      : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._append(f"Computer  : {os.environ.get('COMPUTERNAME', 'Unknown')}")
         self._append()
 
         if not is_windows():
@@ -232,32 +266,39 @@ class MainWindow(QtWidgets.QWidget):
         _, os_ver = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).Version\"")
         _, os_build = run_command("powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).BuildNumber\"")
         if code == 0:
-            self._append(f"OS: {os_name} (Version {os_ver} / Build {os_build})")
+            self._append("System")
+            self._append("-" * 60)
+            self._append(f"OS        : {compact_single_line(os_name)}")
+            self._append(f"Version   : {compact_single_line(os_ver)}")
+            self._append(f"Build     : {compact_single_line(os_build)}")
         else:
-            self._append("OS: unable to query")
-        self._append(f"Admin: {'YES' if is_admin() else 'NO'}")
+            self._append("OS        : unable to query")
+        self._append(f"Admin     : {'YES' if is_admin() else 'NO'}")
         self._append()
 
+        self._append("Configuration checks")
+        self._append("-" * 60)
+
         checks = [
-            ("Active power plan", "powercfg /getactivescheme"),
-            ("Fast Startup (HiberbootEnabled)", "reg query \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power\" /v HiberbootEnabled"),
-            ("GameDVR_Enabled", "reg query \"HKCU\\System\\GameConfigStore\" /v GameDVR_Enabled"),
-            ("AppCaptureEnabled", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR\" /v AppCaptureEnabled"),
-            ("AllowGameDVR", "reg query \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR\" /v AllowGameDVR"),
-            ("VisualFXSetting", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects\" /v VisualFXSetting"),
-            ("IconsOnly", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\" /v IconsOnly"),
-            ("ToastEnabled", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\" /v ToastEnabled"),
-            ("DisableNotificationCenter", "reg query \"HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer\" /v DisableNotificationCenter"),
+            ("Active power plan", "powercfg /getactivescheme", parse_active_power_plan),
+            ("Fast Startup", "reg query \"HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power\" /v HiberbootEnabled", parse_registry_value),
+            ("GameDVR enabled", "reg query \"HKCU\\System\\GameConfigStore\" /v GameDVR_Enabled", parse_registry_value),
+            ("App capture enabled", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR\" /v AppCaptureEnabled", parse_registry_value),
+            ("Policy: AllowGameDVR", "reg query \"HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR\" /v AllowGameDVR", parse_registry_value),
+            ("Visual effects level", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects\" /v VisualFXSetting", parse_registry_value),
+            ("Desktop icon labels", "reg query \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced\" /v IconsOnly", parse_registry_value),
+            ("Toast notifications", "reg query \"HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\" /v ToastEnabled", parse_registry_value),
+            ("Notification center", "reg query \"HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer\" /v DisableNotificationCenter", parse_registry_value),
         ]
 
-        for title, cmd in checks:
-            self._append(f"[{title}]")
+        for title, cmd, parser in checks:
             rc, out = run_command(cmd)
             if rc == 0 and out:
-                self._append(out)
+                parsed = parser(out)
+                value = parsed if parsed else compact_single_line(out)
+                self._append(f"- {title:<24}: {value}")
             else:
-                self._append("Unable to query")
-            self._append()
+                self._append(f"- {title:<24}: Unable to query")
 
     def run_apply(self) -> None:
         self._append("=== DXM PC Setup (APPLY) ===")
