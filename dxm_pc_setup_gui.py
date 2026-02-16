@@ -408,6 +408,7 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_install_apps(self) -> list[InstallApp]:
         return [
+            InstallApp("chrome", "Google Chrome", "Google.Chrome"),
             InstallApp("vlc", "VLC media player", "VideoLAN.VLC"),
             InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake"),
             InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++"),
