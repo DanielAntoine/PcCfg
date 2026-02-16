@@ -497,8 +497,9 @@ def format_power_dual_status(
     return format_status_line(label, display, ok)
 
 
-def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], bool] | None = None) -> list[str]:
-    lines: list[str] = []
+def collect_apply_status_checks(cancel_requested: Callable[[], bool] | None = None) -> list[tuple[str, str, bool]]:
+    """Collect APPLY option status checks as structured tuples."""
+    checks: list[tuple[str, str, bool]] = []
 
     _, active_plan_out = run_command_with_options(
         ["powercfg", "/getactivescheme"],
@@ -509,52 +510,32 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
     high_perf_guid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
     active_line = compact_single_line(active_plan_out).lower()
     active_ok = high_perf_guid in active_line or "high performance" in active_line
-    lines.append(format_status_line("Active power plan", active_plan, active_ok))
+    checks.append(("Active power plan", active_plan, active_ok))
 
-    lines.append(
-        format_power_dual_status(
-            "Sleep timeout",
-            "SUB_SLEEP",
-            "STANDBYIDLE",
-            expected_ac=0,
-            expected_dc=0,
-            value_formatter=readable_timeout_seconds,
-            cancel_requested=cancel_requested,
-        )
+    power_checks = (
+        ("Sleep timeout", "SUB_SLEEP", "STANDBYIDLE", 0, 0),
+        ("Hibernate timeout", "SUB_SLEEP", "HIBERNATEIDLE", 0, 0),
+        ("Disk timeout", "SUB_DISK", "DISKIDLE", 0, 0),
+        ("Monitor timeout", "SUB_VIDEO", "VIDEOIDLE", 1800, 1800),
     )
-    lines.append(
-        format_power_dual_status(
-            "Hibernate timeout",
-            "SUB_SLEEP",
-            "HIBERNATEIDLE",
-            expected_ac=0,
-            expected_dc=0,
-            value_formatter=readable_timeout_seconds,
-            cancel_requested=cancel_requested,
-        )
-    )
-    lines.append(
-        format_power_dual_status(
-            "Disk timeout",
-            "SUB_DISK",
-            "DISKIDLE",
-            expected_ac=0,
-            expected_dc=0,
-            value_formatter=readable_timeout_seconds,
-            cancel_requested=cancel_requested,
-        )
-    )
-    lines.append(
-        format_power_dual_status(
-            "Monitor timeout",
-            "SUB_VIDEO",
-            "VIDEOIDLE",
-            expected_ac=1800,
-            expected_dc=1800,
-            value_formatter=readable_timeout_seconds,
-            cancel_requested=cancel_requested,
-        )
-    )
+    for label, subgroup, setting, expected_ac, expected_dc in power_checks:
+        ac_value, dc_value = query_power_setting_indices(subgroup, setting, cancel_requested)
+        if ac_value is None or dc_value is None:
+            checks.append((label, "Unable to query", False))
+            continue
+        ok = ac_value == expected_ac and dc_value == expected_dc
+        if ac_value == dc_value:
+            current_value = readable_timeout_seconds(ac_value)
+            expected_value = readable_timeout_seconds(expected_ac)
+            display = current_value if ok else f"{current_value} (expected {expected_value})"
+            checks.append((label, display, ok))
+            continue
+
+        display = f"AC={readable_timeout_seconds(ac_value)}, DC={readable_timeout_seconds(dc_value)}"
+        if not ok:
+            expected_display = f"AC={readable_timeout_seconds(expected_ac)}, DC={readable_timeout_seconds(expected_dc)}"
+            display = f"{display} (expected {expected_display})"
+        checks.append((label, display, ok))
 
     usb_suspend = query_power_setting_indices(
         "2a737441-1930-4402-8d77-b2bebba308a3",
@@ -562,10 +543,10 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if usb_suspend[0] is None or usb_suspend[1] is None:
-        lines.append(format_status_line("USB selective suspend", "Unable to query", False))
+        checks.append(("USB selective suspend", "Unable to query", False))
     else:
         usb_ok = usb_suspend[0] == 0 and usb_suspend[1] == 0
-        lines.append(format_status_line("USB selective suspend", f"AC={usb_suspend[0]}, DC={usb_suspend[1]}", usb_ok))
+        checks.append(("USB selective suspend", f"AC={usb_suspend[0]}, DC={usb_suspend[1]}", usb_ok))
 
     fast_startup = query_registry_dword(
         "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Power",
@@ -573,9 +554,9 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if fast_startup is None:
-        lines.append(format_status_line("Fast Startup", "Unable to query", False))
+        checks.append(("Fast Startup", "Unable to query", False))
     else:
-        lines.append(format_status_line("Fast Startup", "Disabled" if fast_startup == 0 else "Enabled", fast_startup == 0))
+        checks.append(("Fast Startup", "Disabled" if fast_startup == 0 else "Enabled", fast_startup == 0))
 
     game_dvr = query_registry_dword("HKCU\\System\\GameConfigStore", "GameDVR_Enabled", cancel_requested)
     app_capture = query_registry_dword(
@@ -590,10 +571,10 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
     )
     game_dvr_ok = game_dvr == 0 and app_capture == 0 and allow_game_dvr == 0
     if game_dvr is None or app_capture is None or allow_game_dvr is None:
-        lines.append(format_status_line("Game DVR", "Unable to query", False))
+        checks.append(("Game DVR", "Unable to query", False))
     else:
-        lines.append(
-            format_status_line(
+        checks.append(
+            (
                 "Game DVR",
                 f"GameDVR_Enabled={game_dvr}, AppCaptureEnabled={app_capture}, AllowGameDVR={allow_game_dvr}",
                 game_dvr_ok,
@@ -606,10 +587,10 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if visual_fx is None:
-        lines.append(format_status_line("Visual effects", "Unable to query", False))
+        checks.append(("Visual effects", "Unable to query", False))
     else:
         visual_fx_value = "Best performance" if visual_fx == 2 else f"Custom ({visual_fx})"
-        lines.append(format_status_line("Visual effects", visual_fx_value, visual_fx == 2))
+        checks.append(("Visual effects", visual_fx_value, visual_fx == 2))
 
     thumbnails = query_registry_dword(
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced",
@@ -617,9 +598,9 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if thumbnails is None:
-        lines.append(format_status_line("Thumbnail previews", "Unable to query", False))
+        checks.append(("Thumbnail previews", "Unable to query", False))
     else:
-        lines.append(format_status_line("Thumbnail previews", "Enabled" if thumbnails == 0 else "Disabled", thumbnails == 0))
+        checks.append(("Thumbnail previews", "Enabled" if thumbnails == 0 else "Disabled", thumbnails == 0))
 
     toast_enabled = query_registry_dword(
         "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\PushNotifications",
@@ -627,9 +608,9 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if toast_enabled is None:
-        lines.append(format_status_line("Toast notifications", "Unable to query", False))
+        checks.append(("Toast notifications", "Unable to query", False))
     else:
-        lines.append(format_status_line("Toast notifications", "Disabled" if toast_enabled == 0 else "Enabled", toast_enabled == 0))
+        checks.append(("Toast notifications", "Disabled" if toast_enabled == 0 else "Enabled", toast_enabled == 0))
 
     notification_center = query_registry_dword(
         "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer",
@@ -637,27 +618,24 @@ def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], 
         cancel_requested,
     )
     if notification_center is None:
-        lines.append(format_status_line("Notification Center", "Unable to query", False))
+        checks.append(("Notification Center", "Unable to query", False))
     else:
-        lines.append(
-            format_status_line(
-                "Notification Center",
-                "Disabled" if notification_center == 1 else "Enabled",
-                notification_center == 1,
-            )
-        )
+        checks.append(("Notification Center", "Disabled" if notification_center == 1 else "Enabled", notification_center == 1))
 
     password_required = query_password_required_status(cancel_requested)
     if password_required is None:
-        lines.append(format_status_line("Windows password", "Unable to query", False))
+        checks.append(("Windows password", "Unable to query", False))
     else:
-        lines.append(
-            format_status_line(
-                "Windows password",
-                "Protected" if password_required else "Not protected",
-                password_required,
-            )
-        )
+        checks.append(("Windows password", "Protected" if password_required else "Not protected", password_required))
+
+    return checks
+
+
+def build_apply_status_lines(rename_target: str, cancel_requested: Callable[[], bool] | None = None) -> list[str]:
+    lines: list[str] = [
+        format_status_line(label, value, ok)
+        for label, value, ok in collect_apply_status_checks(cancel_requested)
+    ]
 
     if rename_target:
         current_name = os.environ.get("COMPUTERNAME", "Unknown")
@@ -723,6 +701,38 @@ class SetupWorker(QtCore.QObject):
         for line in build_apply_status_lines(self._rename_target, self._cancelled):
             self.log_line.emit(line)
         self.step_finished.emit("APPLY option status", True)
+
+        inspect_apply_task_map = {
+            "Active power plan": "Power plan: Performance (High performance)",
+            "Sleep timeout": "Sleep: Never (AC)",
+            "Hibernate timeout": "Hibernate: Off",
+            "Disk timeout": "Disk sleep: Never",
+            "Monitor timeout": "Monitor timeout: 30 min",
+            "Fast Startup": "Disable Fast Startup",
+            "Game DVR": "Disable Game Bar / Game DVR",
+            "Visual effects": "Enable Best performance + keep thumbnails",
+            "Toast notifications": "Disable Windows notifications (current user)",
+            "Notification Center": "Disable Windows notifications (current user)",
+        }
+        notification_results: list[bool] = []
+        for status_label, value, ok in collect_apply_status_checks(self._cancelled):
+            task_label = inspect_apply_task_map.get(status_label)
+            if not task_label:
+                continue
+            if task_label == "Disable Windows notifications (current user)":
+                notification_results.append(ok)
+                continue
+            self.checklist_status.emit(task_label, "PASS" if ok else "FAIL", ok, f"Inspect: {status_label}={value}")
+
+        if notification_results:
+            notifications_ok = all(notification_results)
+            self.checklist_status.emit(
+                "Disable Windows notifications (current user)",
+                "PASS" if notifications_ok else "FAIL",
+                notifications_ok,
+                "Inspect: Toast notifications and Notification Center",
+            )
+
         self.log_line.emit("")
 
         if self._cancelled():
