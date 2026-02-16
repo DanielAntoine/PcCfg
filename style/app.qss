@@ -1,0 +1,67 @@
+QWidget {
+    background-color: #111827;
+    color: #e5e7eb;
+    font-family: "Segoe UI", "Inter", sans-serif;
+    font-size: 10.5pt;
+}
+
+QGroupBox {
+    border: 1px solid #374151;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding: 12px;
+    font-weight: 600;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #93c5fd;
+}
+
+QComboBox,
+QPlainTextEdit,
+QLineEdit,
+QInputDialog {
+    background-color: #1f2937;
+    border: 1px solid #4b5563;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+QComboBox::drop-down {
+    border: none;
+}
+
+QPushButton {
+    background-color: #2563eb;
+    border: none;
+    border-radius: 6px;
+    color: #ffffff;
+    font-weight: 600;
+    padding: 8px 14px;
+}
+
+QPushButton:hover {
+    background-color: #1d4ed8;
+}
+
+QPushButton:disabled {
+    background-color: #374151;
+    color: #9ca3af;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QPlainTextEdit {
+    selection-background-color: #2563eb;
+    border-radius: 8px;
+}

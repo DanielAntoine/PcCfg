@@ -15,6 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 from PyQt5 import QtCore, QtWidgets
@@ -52,6 +53,14 @@ def is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except Exception:
         return False
+
+
+def load_stylesheet() -> str:
+    """Load optional Qt stylesheet from ./style/app.qss."""
+    stylesheet_path = Path(__file__).resolve().parent / "style" / "app.qss"
+    if not stylesheet_path.exists():
+        return ""
+    return stylesheet_path.read_text(encoding="utf-8")
 
 
 class MainWindow(QtWidgets.QWidget):
@@ -289,6 +298,7 @@ class MainWindow(QtWidgets.QWidget):
 
 def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
+    app.setStyleSheet(load_stylesheet())
     window = MainWindow()
     window.show()
     return app.exec_()
