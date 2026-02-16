@@ -26,3 +26,68 @@ python dxm_pc_setup_gui.py
 ```
 
 On Windows, the app relaunches itself with Administrator privileges when needed.
+
+## Windows non-interactive install commands (recommended)
+If you want installs to run without prompts (`Y/N`, path questions, etc.), use these command patterns.
+
+### 1) Preferred: `winget`
+Use `--silent` plus agreement flags to avoid interaction.
+
+```powershell
+winget install --id <Publisher.AppId> --exact --silent --accept-package-agreements --accept-source-agreements
+```
+
+Example:
+
+```powershell
+winget install --id Google.Chrome --exact --silent --accept-package-agreements --accept-source-agreements
+```
+
+### 2) Chocolatey
+
+```powershell
+choco install <package-name> -y --no-progress
+```
+
+Example:
+
+```powershell
+choco install git -y --no-progress
+```
+
+### 3) Scoop
+
+```powershell
+scoop install <package-name>
+```
+
+Scoop installs are typically non-interactive by default.
+
+### 4) MSI installers
+For raw MSI files, use the Windows installer service directly:
+
+```powershell
+msiexec /i "C:\path\installer.msi" /qn /norestart
+```
+
+### 5) EXE installers
+Most EXE installers support one of these silent switches:
+
+```powershell
+# Common patterns (vendor-dependent)
+installer.exe /S
+installer.exe /silent
+installer.exe /verysilent /norestart
+```
+
+### 6) PowerShell package providers (if used)
+
+```powershell
+Install-Package <name> -Force -Confirm:$false
+```
+
+## Practical guidance
+- Prefer `winget` first on modern Windows 10/11.
+- Use `--exact` with `winget` to avoid ambiguous package matches.
+- Keep installers idempotent in scripts (check whether software is already installed before re-running).
+- Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
