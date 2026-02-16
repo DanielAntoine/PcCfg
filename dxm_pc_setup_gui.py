@@ -1098,7 +1098,7 @@ class MainWindow(QtWidgets.QWidget):
             ManualInstallApp(
                 "creative_cloud",
                 "Adobe Creative Cloud",
-                "Creative tools",
+                "Video editing / color grading",
                 "https://creativecloud.adobe.com/apps/download/creative-cloud",
             ),
             ManualInstallApp(
