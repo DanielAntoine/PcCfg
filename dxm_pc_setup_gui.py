@@ -209,6 +209,7 @@ class MainWindow(QtWidgets.QWidget):
         self.inspect_button = QtWidgets.QPushButton("Inspect")
         self.run_button = QtWidgets.QPushButton("Run")
         self.clear_button = QtWidgets.QPushButton("Clear Output")
+        self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
 
         self.output = QtWidgets.QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -240,16 +241,54 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
 
+        bottom_row = QtWidgets.QHBoxLayout()
+        bottom_row.addStretch(1)
+        bottom_row.addWidget(self.save_report_button)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.select_all_checkbox)
         layout.addWidget(self.tasks_group)
         layout.addLayout(btn_row)
         layout.addWidget(self.output)
+        layout.addLayout(bottom_row)
 
         self.select_all_checkbox.stateChanged.connect(self._toggle_all)
         self.inspect_button.clicked.connect(self._run_inspect)
         self.run_button.clicked.connect(self._run_apply)
         self.clear_button.clicked.connect(self.output.clear)
+        self.save_report_button.clicked.connect(self._save_report_txt)
+
+    def _save_report_txt(self) -> None:
+        report_content = self.output.toPlainText().strip()
+        if not report_content:
+            QtWidgets.QMessageBox.information(
+                self,
+                "Save Report",
+                "There is no report output to save yet.",
+            )
+            return
+
+        default_name = f"dxm_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        selected_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save report as TXT",
+            default_name,
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not selected_path:
+            return
+
+        try:
+            Path(selected_path).write_text(f"{report_content}\n", encoding="utf-8")
+        except OSError as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                "Save Report",
+                f"Failed to save report:\n{exc}",
+            )
+            return
+
+        self._append(f"[INFO] Report saved to: {selected_path}")
 
     def _build_tasks(self) -> list[ApplyTask]:
         return [
