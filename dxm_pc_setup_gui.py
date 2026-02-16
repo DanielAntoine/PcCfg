@@ -9,6 +9,7 @@ PyQt-based Windows setup utility inspired by the provided batch script.
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import json
 import os
 import platform
@@ -20,7 +21,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from PyQt5 import QtCore, QtWidgets
+PYQT5_INSTALLED = importlib.util.find_spec("PyQt5") is not None
+if PYQT5_INSTALLED:
+    from PyQt5 import QtCore, QtWidgets
+else:
+    class _QtWidgetsPlaceholder:
+        class QWidget:
+            pass
+
+    QtCore = None
+    QtWidgets = _QtWidgetsPlaceholder()
 
 
 APP_VERSION = "1.0.0"
@@ -87,6 +97,22 @@ def relaunch_as_admin() -> bool:
         return result > 32
     except Exception:
         return False
+
+
+def report_missing_pyqt5() -> None:
+    """Show a clear startup error when the GUI dependency is unavailable."""
+    message = (
+        "Unable to start DXM PC Setup because PyQt5 is not installed.\n\n"
+        "Install it with:\n"
+        f"{sys.executable} -m pip install PyQt5"
+    )
+    print(f"[ERROR] {message}")
+
+    if is_windows():
+        try:
+            ctypes.windll.user32.MessageBoxW(None, message, APP_NAME, 0x10)
+        except Exception:
+            pass
 
 
 def load_stylesheet() -> str:
@@ -768,6 +794,10 @@ class MainWindow(QtWidgets.QWidget):
 
 
 def main() -> int:
+    if not PYQT5_INSTALLED:
+        report_missing_pyqt5()
+        return 1
+
     if is_windows() and not is_admin():
         if relaunch_as_admin():
             return 0
