@@ -74,6 +74,9 @@ class MainWindow(QtWidgets.QWidget):
 
         self.apply_tasks = self._build_tasks()
         self.task_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
+        self.rename_input = QtWidgets.QLineEdit()
+        self.rename_input.setPlaceholderText("New computer name")
+        self.rename_input.setEnabled(False)
 
         self.tasks_group = QtWidgets.QGroupBox("APPLY Options")
         self.tasks_layout = QtWidgets.QVBoxLayout(self.tasks_group)
@@ -81,7 +84,15 @@ class MainWindow(QtWidgets.QWidget):
             cb = QtWidgets.QCheckBox(task.label)
             cb.setChecked(True)
             self.task_checkboxes[task.key] = cb
-            self.tasks_layout.addWidget(cb)
+            if task.key == "rename_pc":
+                rename_row = QtWidgets.QHBoxLayout()
+                rename_row.addWidget(cb)
+                rename_row.addWidget(self.rename_input)
+                self.tasks_layout.addLayout(rename_row)
+                cb.toggled.connect(self.rename_input.setEnabled)
+                self.rename_input.setEnabled(cb.isChecked())
+            else:
+                self.tasks_layout.addWidget(cb)
 
         form = QtWidgets.QFormLayout()
         form.addRow("Mode", self.mode_combo)
@@ -169,7 +180,7 @@ class MainWindow(QtWidgets.QWidget):
             ),
             ApplyTask(
                 key="rename_pc",
-                label="Rename computer (optional; prompted during APPLY)",
+                label="Rename computer",
                 action=self._rename_computer_action,
             ),
         ]
@@ -272,12 +283,8 @@ class MainWindow(QtWidgets.QWidget):
         self._append("DONE. Reboot is recommended (required if computer rename was applied).")
 
     def _rename_computer_action(self) -> list[str]:
-        new_name, ok = QtWidgets.QInputDialog.getText(
-            self,
-            "Rename Computer",
-            "Enter new computer name (leave empty to skip):",
-        )
-        if not ok or not new_name.strip():
+        new_name = self.rename_input.text().strip()
+        if not new_name:
             self._append("  Rename skipped.")
             return []
 
