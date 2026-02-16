@@ -1070,6 +1070,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree = QtWidgets.QTreeWidget()
         self.installation_checklist_tree.setObjectName("installationChecklistTree")
         self.installation_checklist_tree.setColumnCount(2)
+        self.installation_checklist_tree.setMinimumWidth(400)
         self.installation_checklist_tree.setHeaderLabels(["Task", "Info"])
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setAlternatingRowColors(True)
