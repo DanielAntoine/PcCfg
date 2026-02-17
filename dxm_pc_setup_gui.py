@@ -2257,7 +2257,18 @@ class MainWindow(QtWidgets.QWidget):
         return DEFAULT_PROFILE_FILE
 
     def _save_profile(self) -> None:
-        input_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
+        suggested_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
+        entered_name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Save profile",
+            "Profile name:",
+            text=suggested_name,
+        )
+        if not ok:
+            self._append("[INFO] Save profile cancelled.")
+            return
+
+        input_name = self._to_pascal_case_alnum(entered_name) or suggested_name
         profile_name = f"{input_name}-{datetime.now().strftime('%y%m%d')}.json"
         profile_path = CHECKLIST_PROFILE_DIR / profile_name
 
