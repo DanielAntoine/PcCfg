@@ -28,15 +28,6 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_WRAP_LINE_LEN = 64
 STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
-DEFAULT_TECHNICIAN_OPTIONS = (
-    "Ludovic Hamel",
-    "Pierre-Luc Paré",
-    "Daniel Antoine Lambert",
-    "Jerome Pelletier",
-    "Dominic Bourget",
-    "Eric Nolin",
-    "Adam Giraudias",
-)
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
 from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
@@ -46,6 +37,7 @@ from pccfg.domain.checklist import (
     CHECKLIST_PROFILE_DIR,
     DEFAULT_PROFILE_FILE,
     CHECKLIST_TASK_MAX_LEN,
+    TECHNICIAN_DEFAULT_OPTIONS,
     FIELD_IDS_BY_LABEL,
     FIELDS_BY_ID,
     FIELDS_BY_LABEL,
@@ -1715,14 +1707,17 @@ class MainWindow(QtWidgets.QWidget):
             )
             return value_input
 
-        if field.field_id == "technician":
+        if field.field_type == "technician":
             value_input = QtWidgets.QComboBox()
             value_input.setEditable(True)
-            value_input.addItems(DEFAULT_TECHNICIAN_OPTIONS)
+            value_input.addItems(TECHNICIAN_DEFAULT_OPTIONS)
             value_input.currentTextChanged.connect(
                 lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
             )
             value_input.lineEdit().editingFinished.connect(
+                lambda input_widget=value_input: self._add_combo_value_if_missing(input_widget)
+            )
+            value_input.lineEdit().returnPressed.connect(
                 lambda input_widget=value_input: self._add_combo_value_if_missing(input_widget)
             )
             return value_input
@@ -2158,8 +2153,14 @@ class MainWindow(QtWidgets.QWidget):
         candidate = (value if value is not None else widget.currentText()).strip()
         if not candidate:
             return
-        if widget.findText(candidate) >= 0:
-            return
+
+        existing_values = [widget.itemText(index) for index in range(widget.count())]
+        for existing in existing_values:
+            if existing.casefold() == candidate.casefold():
+                if widget.isEditable():
+                    widget.setCurrentText(existing)
+                return
+
         widget.addItem(candidate)
 
     def _build_tasks(self) -> list[ApplyTask]:

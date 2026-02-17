@@ -8,6 +8,15 @@ CHECKLIST_LOG_FILE = Path(__file__).resolve().parents[2] / "installation_checkli
 CHECKLIST_PROFILE_DIR = Path(__file__).resolve().parents[2] / "profiles"
 DEFAULT_PROFILE_FILE = CHECKLIST_PROFILE_DIR / "default-profile.json"
 CHECKLIST_TASK_MAX_LEN = 52
+TECHNICIAN_DEFAULT_OPTIONS: tuple[str, ...] = (
+    "Ludovic Hamel",
+    "Pierre-Luc Paré",
+    "Daniel Antoine Lambert",
+    "Jerome Pelletier",
+    "Dominic Bourget",
+    "Eric Nolin",
+    "Adam Giraudias",
+)
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("client_name", "Client name", "text"),
@@ -15,7 +24,7 @@ CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("numbering", "Numbering00 (e.g., 01, 02, 03)", "numbering"),
     ChecklistField("hostname", "Hostname/User: {ClientNamePascal}-{Role4LUpper}-{numbering00}", "text"),
     ChecklistField("inventory_id", "Inventory ID", "text"),
-    ChecklistField("technician", "Technician", "text"),
+    ChecklistField("technician", "Technicien", "technician"),
     ChecklistField("date", "Date", "date"),
     ChecklistField("installed_cards", "Installed cards: BMD / 10GbE / others", "text"),
     ChecklistField("file_name", "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg", "text"),
@@ -36,7 +45,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("computer_role", "Computer role"),
             ChecklistItem("numbering", "Numbering00 (e.g., 01, 02, 03)"),
             ChecklistItem("inventory_id", "Inventory ID"),
-            ChecklistItem("technician", "Technician"),
+            ChecklistItem("technician", "Technicien"),
             ChecklistItem("installed_cards", "Installed cards: BMD / 10GbE / others"),
         ),
     ),
