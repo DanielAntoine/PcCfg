@@ -28,6 +28,7 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_WRAP_LINE_LEN = 64
 STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
+MANUAL_STATUS_CYCLE = ("PENDING", "PASS", "FAIL", "NA")
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
 from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
@@ -1614,6 +1615,15 @@ class InstalledCardsInput(QtWidgets.QWidget):
         self.changed.emit()
 
 
+class StatusChipLabel(QtWidgets.QLabel):
+    clicked = QtCore.pyqtSignal()
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -1791,10 +1801,11 @@ class MainWindow(QtWidgets.QWidget):
                 self.installation_checklist_items.append(checklist_item)
                 self.checklist_item_by_id[section_item.item_id] = checklist_item
 
-                status_chip = QtWidgets.QLabel("PENDING")
+                status_chip = StatusChipLabel("PENDING")
                 status_chip.setObjectName("checklistStatusChip")
                 status_chip.setProperty("chipStatus", "PENDING")
                 status_chip.setAlignment(QtCore.Qt.AlignCenter)
+                status_chip.clicked.connect(lambda task_id=section_item.item_id: self._on_status_chip_clicked(task_id))
                 self.installation_checklist_tree.setItemWidget(checklist_item, 1, status_chip)
                 self.checklist_status_chips[section_item.item_id] = status_chip
                 self.checklist_runtime_status[section_item.item_id] = ("PENDING", "Waiting")
@@ -1891,6 +1902,36 @@ class MainWindow(QtWidgets.QWidget):
 
     def _on_checklist_item_hovered(self, item: QtWidgets.QTreeWidgetItem, _column: int) -> None:
         self._set_checklist_status_message(item)
+
+    def _on_status_chip_clicked(self, task_id: str) -> None:
+        item = self.checklist_item_by_id.get(task_id)
+        if item is None:
+            return
+
+        current_status = self.checklist_runtime_status.get(task_id, ("PENDING", "Waiting"))[0]
+        try:
+            current_index = MANUAL_STATUS_CYCLE.index(current_status)
+        except ValueError:
+            current_index = 0
+        next_status = MANUAL_STATUS_CYCLE[(current_index + 1) % len(MANUAL_STATUS_CYCLE)]
+
+        if next_status == "PASS":
+            self.checklist_item_states[task_id] = "CHECKED"
+            item.setCheckState(0, QtCore.Qt.Checked)
+            detail = "Marked complete"
+        elif next_status == "NA":
+            self.checklist_item_states[task_id] = "NA"
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            detail = "Not applicable"
+        else:
+            self.checklist_item_states[task_id] = "UNCHECKED"
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            detail = "Waiting" if next_status == "PENDING" else "Needs attention"
+
+        self._set_checklist_item_status(task_id, next_status, detail)
+        self._update_installation_checklist_progress()
+        self._set_checklist_status_message(item)
+        self._save_installation_checklist_state()
 
     def _set_checklist_status_message(self, item: QtWidgets.QTreeWidgetItem | None) -> None:
         if item is None:
