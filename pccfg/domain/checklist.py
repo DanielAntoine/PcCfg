@@ -1,11 +1,27 @@
 from __future__ import annotations
 
+import os
+import platform
 from pathlib import Path
 
 from .models import ChecklistField, ChecklistItem, ChecklistSection
 
-CHECKLIST_LOG_FILE = Path(__file__).resolve().parents[2] / "installation_checklist_log.json"
-CHECKLIST_PROFILE_DIR = Path(__file__).resolve().parents[2] / "profiles"
+def get_app_data_root() -> Path:
+    """Return a stable writable storage root for checklist/profile data."""
+    if platform.system().lower() == "windows":
+        appdata = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA")
+        if appdata:
+            return Path(appdata) / "PcCfg"
+
+    project_root = Path.cwd()
+    if (project_root / "pccfg").is_dir():
+        return project_root / ".pccfg"
+    return Path.home() / ".pccfg"
+
+
+APP_DATA_ROOT = get_app_data_root()
+CHECKLIST_LOG_FILE = APP_DATA_ROOT / "installation_checklist_log.json"
+CHECKLIST_PROFILE_DIR = APP_DATA_ROOT / "profiles"
 DEFAULT_PROFILE_FILE = CHECKLIST_PROFILE_DIR / "default-profile.json"
 CHECKLIST_TASK_MAX_LEN = 52
 TECHNICIAN_DEFAULT_OPTIONS: tuple[str, ...] = (

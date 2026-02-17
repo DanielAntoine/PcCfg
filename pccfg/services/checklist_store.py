@@ -15,6 +15,7 @@ def save_checklist_state(
         "items": checklist_values_by_item_id,
         "info": info_values_by_field_id,
     }
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
