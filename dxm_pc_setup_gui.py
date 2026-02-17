@@ -1902,7 +1902,6 @@ class MainWindow(QtWidgets.QWidget):
         }
         checklist_info = {field.field_id: self._get_checklist_field_value(field.field_id) for field in CHECKLIST_FIELDS}
         save_checklist_state(CHECKLIST_LOG_FILE, checklist_state, checklist_info)
-        self._append(f"[INFO] Checklist autosaved to: {CHECKLIST_LOG_FILE.resolve()}")
 
     def _load_installation_checklist_state(self) -> None:
         try:
