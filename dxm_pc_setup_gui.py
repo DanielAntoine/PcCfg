@@ -557,9 +557,11 @@ def detect_software_installation(winget_id: str, cancel_requested: Callable[[], 
             return None
 
         fallback_paths, fallback_commands = fallback
+        quoted_paths = ",".join(json.dumps(path) for path in fallback_paths)
+        quoted_commands = ",".join(json.dumps(name) for name in fallback_commands)
         fallback_command = (
-            "$paths=@(" + ",".join(f"'{path}'" for path in fallback_paths) + "); "
-            "$commands=@(" + ",".join(f"'{name}'" for name in fallback_commands) + "); "
+            "$paths=@(" + quoted_paths + "); "
+            "$commands=@(" + quoted_commands + "); "
             "$pathHit = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; "
             "$commandHit = $commands | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1; "
             "if ($pathHit) { $pathHit } elseif ($commandHit) { $commandHit }"
