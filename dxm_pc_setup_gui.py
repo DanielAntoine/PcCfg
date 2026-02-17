@@ -23,6 +23,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 
 APP_VERSION = "0.1.0"
+APP_EXE_NAME = f"PcCfg-v{APP_VERSION}"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 APP_ICON_NAME = "PCSetup.ico"
 APP_ICON_PATH = Path(__file__).resolve().parent / "Icon" / APP_ICON_NAME
@@ -2491,6 +2492,8 @@ def main() -> int:
 
     set_windows_app_user_model_id(APP_ID)
     app = QtWidgets.QApplication(sys.argv)
+    app.setApplicationName(APP_EXE_NAME)
+    app.setApplicationDisplayName(APP_NAME)
     icon = load_app_icon()
     if not icon.isNull():
         app.setWindowIcon(icon)
