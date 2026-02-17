@@ -143,4 +143,4 @@ Install-Package <name> -Force -Confirm:$false
   - Dialog buttons: `Restart now` and `Restart later`.
   - Include which tasks triggered reboot requirement.
 - [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
-- [ ] dont show hostname date filename in checklist
+- [x] dont show hostname date filename in checklist

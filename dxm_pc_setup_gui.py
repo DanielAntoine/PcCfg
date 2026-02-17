@@ -54,6 +54,7 @@ HOSTNAME_FIELD_ID = "hostname"
 INVENTORY_ID_FIELD_ID = "inventory_id"
 DATE_FIELD_ID = "date"
 FILE_NAME_FIELD_ID = "file_name"
+HIDDEN_CHECKLIST_FIELD_IDS = {HOSTNAME_FIELD_ID, DATE_FIELD_ID, FILE_NAME_FIELD_ID}
 
 SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("software_google_chrome", "Google Chrome", "Google.Chrome"),
@@ -1433,7 +1434,11 @@ class MainWindow(QtWidgets.QWidget):
                 self.installation_checklist_tree.setItemWidget(checklist_item, 2, value_input)
                 self.checklist_info_inputs[field.field_id] = value_input
 
-        export_only_fields = [field for field in CHECKLIST_FIELDS if field.field_id not in field_ids_rendered_in_sections]
+        export_only_fields = [
+            field
+            for field in CHECKLIST_FIELDS
+            if field.field_id not in field_ids_rendered_in_sections and field.field_id not in HIDDEN_CHECKLIST_FIELD_IDS
+        ]
         if export_only_fields:
             section_header = QtWidgets.QTreeWidgetItem(["Info fields (export only)", "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
@@ -1738,10 +1743,7 @@ class MainWindow(QtWidgets.QWidget):
             )
             for item in self.installation_checklist_items
         }
-        checklist_info = {
-            key: self._read_checklist_info_value(widget)
-            for key, widget in self.checklist_info_inputs.items()
-        }
+        checklist_info = {field.field_id: self._get_checklist_field_value(field.field_id) for field in CHECKLIST_FIELDS}
         save_checklist_state(CHECKLIST_LOG_FILE, checklist_state, checklist_info)
 
     def _load_installation_checklist_state(self) -> None:
@@ -1941,8 +1943,7 @@ class MainWindow(QtWidgets.QWidget):
         ]
 
         for field in CHECKLIST_FIELDS:
-            widget = self.checklist_info_inputs.get(field.field_id)
-            value = self._read_checklist_info_value(widget) if widget is not None else ""
+            value = self._get_checklist_field_value(field.field_id)
             lines.append(f"- {field.label}: {value or '-'}")
 
         lines.append("")
@@ -1979,6 +1980,17 @@ class MainWindow(QtWidgets.QWidget):
 
         self._append(f"[INFO] Installation report exported to: {selected_path}")
         self._open_text_file(selected_path, "Export installation report")
+
+    def _get_checklist_field_value(self, field_id: str) -> str:
+        if field_id == HOSTNAME_FIELD_ID:
+            return self._build_hostname_value()
+        if field_id == DATE_FIELD_ID:
+            return datetime.now().strftime("%Y-%m-%d")
+        if field_id == FILE_NAME_FIELD_ID:
+            return self._build_file_name_value()
+
+        widget = self.checklist_info_inputs.get(field_id)
+        return self._read_checklist_info_value(widget) if widget is not None else ""
 
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
         if isinstance(widget, QtWidgets.QLineEdit):
