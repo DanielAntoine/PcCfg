@@ -1088,7 +1088,7 @@ class SetupWorker(QtCore.QObject):
         inspect_checks = {
             "Install network drivers (LAN/10GbE/Wi-Fi)": "RUNNING",
             "Test Wi-Fi": "RUNNING",
-            "Test remote connection": "RUNNING",
+            "Internet reachable": "RUNNING",
             "Ensure all disks are visible": "RUNNING",
             "Validate SSH (installed + running + listening:22)": "RUNNING",
             "Enable Remote Desktop (service + firewall + NLA)": "RUNNING",
@@ -1254,11 +1254,11 @@ class SetupWorker(QtCore.QObject):
 
         if internet_ok is None:
             self.log_line.emit(format_status_line("Internet", internet_detail, False))
-            self.checklist_status.emit("Test remote connection", "PENDING", False, internet_detail)
+            self.checklist_status.emit("Internet reachable", "PENDING", False, internet_detail)
         else:
             self.log_line.emit(format_status_line("Internet", internet_detail, internet_ok))
             self.checklist_status.emit(
-                "Test remote connection",
+                "Internet reachable",
                 "PASS" if internet_ok else "FAIL",
                 internet_ok,
                 internet_detail,
