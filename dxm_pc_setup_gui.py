@@ -423,6 +423,50 @@ class DragCheckTreeWidget(QtWidgets.QTreeWidget):
         return indicator_rect.contains(position)
 
 
+class DragCheckBox(QtWidgets.QCheckBox):
+    """QCheckBox that supports click-and-drag toggling across peer checkboxes."""
+
+    _drag_active = False
+    _drag_state = False
+
+    @classmethod
+    def _stop_drag_if_released(cls) -> None:
+        if not (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
+            cls._drag_active = False
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            DragCheckBox._drag_active = True
+            DragCheckBox._drag_state = not self.isChecked()
+            self.setChecked(DragCheckBox._drag_state)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        DragCheckBox._stop_drag_if_released()
+        if DragCheckBox._drag_active and (event.buttons() & QtCore.Qt.LeftButton):
+            self.setChecked(DragCheckBox._drag_state)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def enterEvent(self, event: QtCore.QEvent) -> None:
+        DragCheckBox._stop_drag_if_released()
+        if DragCheckBox._drag_active and (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
+            self.setChecked(DragCheckBox._drag_state)
+            event.accept()
+            return
+        super().enterEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton and DragCheckBox._drag_active:
+            DragCheckBox._drag_active = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
     """Detect whether a Wi-Fi adapter exists."""
     command = (
@@ -1561,7 +1605,7 @@ class MainWindow(QtWidgets.QWidget):
         self.setWindowTitle(APP_NAME)
         self.resize(920, 700)
 
-        self.select_all_checkbox = QtWidgets.QCheckBox("Select all APPLY options")
+        self.select_all_checkbox = DragCheckBox("Select all APPLY options")
         self.select_all_checkbox.setChecked(False)
 
         self.inspect_button = QtWidgets.QPushButton("Inspect")
@@ -1589,7 +1633,7 @@ class MainWindow(QtWidgets.QWidget):
         self.tasks_group = QtWidgets.QGroupBox("APPLY Options")
         self.tasks_layout = QtWidgets.QVBoxLayout(self.tasks_group)
         for task in self.apply_tasks:
-            cb = QtWidgets.QCheckBox(task.label)
+            cb = DragCheckBox(task.label)
             cb.setChecked(False)
             self.task_checkboxes[task.key] = cb
             if task.key == "rename_pc":
@@ -1613,7 +1657,7 @@ class MainWindow(QtWidgets.QWidget):
                 font.setBold(True)
                 category_label.setFont(font)
                 self.apps_layout.addWidget(category_label)
-            cb = QtWidgets.QCheckBox(app.label)
+            cb = DragCheckBox(app.label)
             cb.setChecked(False)
             self.app_checkboxes[app.key] = cb
             self.apps_layout.addWidget(cb)
