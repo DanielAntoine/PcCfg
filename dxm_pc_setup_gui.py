@@ -1884,8 +1884,16 @@ class MainWindow(QtWidgets.QWidget):
     def _on_inspect_checklist_status(self, task_label: str, status: str, should_check: bool, detail: str) -> None:
         task_id = ITEM_IDS_BY_LABEL.get(task_label, task_label)
         item = self.checklist_item_by_id.get(task_id)
-        if item is None or self.checklist_item_states.get(task_id) == "NA":
+        if item is None:
             return
+
+        state = self.checklist_item_states.get(task_id)
+        is_software_item = task_id.startswith("software_")
+        if state == "NA":
+            if not (is_software_item and should_check and status == "PASS"):
+                return
+            self.checklist_item_states[task_id] = "UNCHECKED"
+
         self._set_checklist_item_status(task_id, status, detail)
         if should_check and status == "PASS":
             self.checklist_item_states[task_id] = "CHECKED"
