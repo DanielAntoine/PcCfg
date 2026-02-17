@@ -1774,11 +1774,12 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_hostname_value(self) -> str:
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
+        client_hostname = (client_name[:6]).ljust(6, "X")
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
         if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
             return ""
-        return f"{client_name}-{role_value[:2]}-{numbering_value}"
+        return f"{client_hostname}-{role_value[:2]}-{numbering_value}"
 
     @staticmethod
     def _to_alnum(value: str) -> str:
