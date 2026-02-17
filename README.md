@@ -120,8 +120,6 @@ Install-Package <name> -Force -Confirm:$false
   - Add Parsec download/install option.
   - Use `winget` silent install.
   - Apply checklist status item.
-
-## plan
 - [ ] Disk usage detection automation:
   - Detect disks that are not used for anything (no meaningful mounted/active volume usage), rather than only checking drive-letter assignment.
 - [ ] Windows Update automation:
