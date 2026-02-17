@@ -8,6 +8,12 @@ CHECKLIST_LOG_FILE = Path(__file__).resolve().parents[2] / "installation_checkli
 CHECKLIST_PROFILE_DIR = Path(__file__).resolve().parents[2] / "profiles"
 DEFAULT_PROFILE_FILE = CHECKLIST_PROFILE_DIR / "default-profile.json"
 CHECKLIST_TASK_MAX_LEN = 52
+COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
+    "Editor",
+    "Colorimetrie",
+    "Server",
+    "Datawringling",
+)
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("client_name", "Client name", "text"),
