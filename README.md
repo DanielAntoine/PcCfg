@@ -141,4 +141,4 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Improve Google Chrome inspect detection with fallback checks when `winget list` cannot be queried.
 
 ## TODO
-- [ ] "installed card" can select multiple from a dropdown, net to create a list off cards and can manualy enter multiple
+- [x] "installed card" can select multiple from a dropdown, now includes 12 preset options and supports manual multi-entry
