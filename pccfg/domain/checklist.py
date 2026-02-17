@@ -36,10 +36,8 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("client_name", "Client name"),
             ChecklistItem("computer_role", "Computer role"),
             ChecklistItem("numbering", "Numbering00 (e.g., 01, 02, 03)"),
-            ChecklistItem("hostname", "Hostname/User: {ClientNamePascal}-{Role2LUpper}-{numbering00}"),
             ChecklistItem("inventory_id", "Inventory ID"),
             ChecklistItem("technician", "Technician"),
-            ChecklistItem("date", "Date"),
             ChecklistItem("installed_cards", "Installed cards: BMD / 10GbE / others"),
         ),
     ),
@@ -47,7 +45,6 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         "evidence_photos",
         "1) Evidence / Photos",
         (
-            ChecklistItem("file_name", "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg"),
             ChecklistItem("attach_photos", "Attach photos to the client inventory record or the ticket"),
         ),
     ),
@@ -122,13 +119,11 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         (
             ChecklistItem("test_usb", "Test USB ports"),
             ChecklistItem("test_wifi", "Test Wi-Fi"),
-            ChecklistItem("install_screenconnect", "Install ScreenConnect"),
-            ChecklistItem("install_parsec", "Install Parsec"),
             ChecklistItem("validate_ssh", "Validate SSH (installed + running + listening:22)"),
             ChecklistItem("enable_rdp", "Enable Remote Desktop (service + firewall + NLA)"),
-            ChecklistItem("test_remote", "Test remote connection"),
             ChecklistItem("record_scid", "Record ScreenConnect ID"),
             ChecklistItem("vault_passwords", "Passwords and keys stored in Vault"),
+            ChecklistItem("test_remote", "Test remote connection"),
         ),
     ),
     ChecklistSection(
