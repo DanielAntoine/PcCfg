@@ -1441,10 +1441,12 @@ class MainWindow(QtWidgets.QWidget):
         self.profile_selector = QtWidgets.QComboBox()
         self.save_profile_button = QtWidgets.QPushButton("Save profile")
         self.reload_profile_button = QtWidgets.QPushButton("Reload profile")
+        self.delete_profile_button = QtWidgets.QPushButton("Delete profile")
         profile_row.addWidget(QtWidgets.QLabel("Profile"))
         profile_row.addWidget(self.profile_selector, stretch=1)
         profile_row.addWidget(self.save_profile_button)
         profile_row.addWidget(self.reload_profile_button)
+        profile_row.addWidget(self.delete_profile_button)
         checklist_group_layout.addLayout(profile_row)
 
         checklist_buttons_row = QtWidgets.QHBoxLayout()
@@ -1550,6 +1552,8 @@ class MainWindow(QtWidgets.QWidget):
         self.save_report_button.clicked.connect(self._save_report_txt)
         self.save_profile_button.clicked.connect(self._save_profile)
         self.reload_profile_button.clicked.connect(self._reload_selected_profile)
+        self.delete_profile_button.clicked.connect(self._delete_selected_profile)
+        self.profile_selector.currentIndexChanged.connect(self._update_profile_action_buttons)
 
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
@@ -1944,12 +1948,18 @@ class MainWindow(QtWidgets.QWidget):
         idx = self.profile_selector.findData(default_path)
         if idx >= 0:
             self.profile_selector.setCurrentIndex(idx)
+        self._update_profile_action_buttons()
 
     def _selected_profile_path(self) -> Path:
         data = self.profile_selector.currentData()
         if isinstance(data, str) and data:
             return Path(data)
         return DEFAULT_PROFILE_FILE
+
+    def _update_profile_action_buttons(self) -> None:
+        profile_path = self._selected_profile_path()
+        can_delete = profile_path != DEFAULT_PROFILE_FILE and profile_path.exists()
+        self.delete_profile_button.setEnabled(can_delete)
 
     def _save_profile(self) -> None:
         suggested_name = to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
@@ -2042,6 +2052,37 @@ class MainWindow(QtWidgets.QWidget):
         self._update_installation_checklist_progress()
         self._save_installation_checklist_state()
         self._append(f"[INFO] Profile reloaded: {profile_path.name}")
+
+    def _delete_selected_profile(self) -> None:
+        profile_path = self._selected_profile_path()
+        if profile_path == DEFAULT_PROFILE_FILE:
+            self._append("[WARN] Default profile cannot be deleted.")
+            self._update_profile_action_buttons()
+            return
+        if not profile_path.exists():
+            self._append(f"[WARN] Profile not found: {profile_path.name}")
+            self._refresh_profile_selector()
+            return
+
+        confirmation = QtWidgets.QMessageBox.question(
+            self,
+            "Delete profile",
+            f"Delete profile '{profile_path.stem}'? This cannot be undone.",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if confirmation != QtWidgets.QMessageBox.Yes:
+            self._append("[INFO] Delete profile cancelled.")
+            return
+
+        try:
+            profile_path.unlink()
+        except OSError as exc:
+            self._append(f"[WARN] Failed to delete profile '{profile_path.name}': {exc}")
+            return
+
+        self._refresh_profile_selector()
+        self._append(f"[INFO] Profile deleted: {profile_path.name}")
 
     def _apply_default_checklist_states(self) -> None:
         for task_id in DEFAULT_NA_ITEM_IDS:
