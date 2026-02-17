@@ -369,6 +369,8 @@ class DragCheckTreeWidget(QtWidgets.QTreeWidget):
         if event.button() == QtCore.Qt.LeftButton:
             item = self.itemAt(event.pos())
             if item is not None and self._is_task_item(item):
+                self.clearSelection()
+                self.setCurrentItem(None)
                 self._drag_check_active = True
                 self._drag_check_state = (
                     QtCore.Qt.Unchecked if item.checkState(0) == QtCore.Qt.Checked else QtCore.Qt.Checked
