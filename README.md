@@ -132,8 +132,6 @@ Install-Package <name> -Force -Confirm:$false
 - [x] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
 - [x] add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck
 - [x] dont show hostname date filename in checklist
-
-## TODO
 - [x] Add Inspect output (informational only) to log console and report output ,CPU (short value) ,Motherboard (short value), BIOS version (short value), IP (IPv4 + IPv6 across all adapters)
 - [x] After Run, show "restart may be needed" add a Dialog buttons: `Restart now` and `Restart later`.
 - [x] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
@@ -141,3 +139,6 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Remove "Validation: Device Manager = 0 unknown devices" from Setup information.
 - [x] Show Setup information inputs under each label (stacked vertically).
 - [x] Improve Google Chrome inspect detection with fallback checks when `winget list` cannot be queried.
+
+## TODO
+- [ ] "installed card" can select multiple from a dropdown menu
