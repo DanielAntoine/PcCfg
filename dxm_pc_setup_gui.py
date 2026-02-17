@@ -55,6 +55,16 @@ INVENTORY_ID_FIELD_ID = "inventory_id"
 DATE_FIELD_ID = "date"
 FILE_NAME_FIELD_ID = "file_name"
 HIDDEN_CHECKLIST_FIELD_IDS = {HOSTNAME_FIELD_ID, DATE_FIELD_ID, FILE_NAME_FIELD_ID}
+CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
+    CLIENT_NAME_FIELD_ID: CLIENT_NAME_FIELD_ID,
+    COMPUTER_ROLE_FIELD_ID: COMPUTER_ROLE_FIELD_ID,
+    NUMBERING_FIELD_ID: NUMBERING_FIELD_ID,
+    INVENTORY_ID_FIELD_ID: INVENTORY_ID_FIELD_ID,
+    "technician": "technician",
+    "installed_cards": "installed_cards",
+    "device_manager_validation": "devmgr_validation",
+    "screenconnect_id": "record_scid",
+}
 
 SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("software_google_chrome", "Google Chrome", "Google.Chrome"),
@@ -534,6 +544,94 @@ def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | Non
     return False, "Not installed"
 
 
+def _clean_short_hardware_value(value: str) -> str:
+    """Normalize long hardware descriptors to compact report values."""
+    normalized = re.sub(r"\(R\)|\(TM\)|\(C\)", "", value, flags=re.IGNORECASE)
+    normalized = re.sub(r"\s+", " ", normalized).strip(" -")
+    return normalized
+
+
+def short_cpu_value(cpu_name: str) -> str:
+    """Extract compact CPU text (for example: Intel i7-12700)."""
+    cleaned = _clean_short_hardware_value(cpu_name)
+    intel_match = re.search(r"(Intel).*?\b(i[3579]-\d{4,5}[A-Z]?)\b", cleaned, flags=re.IGNORECASE)
+    if intel_match:
+        return f"Intel {intel_match.group(2).upper()}"
+
+    amd_match = re.search(r"(AMD).*?\b(Ryzen\s+[3579]\s+\d{3,5}[A-Z0-9]*)\b", cleaned, flags=re.IGNORECASE)
+    if amd_match:
+        return f"AMD {amd_match.group(2)}"
+    return cleaned
+
+
+def detect_system_info(cancel_requested: Callable[[], bool] | None = None) -> dict[str, str]:
+    """Collect CPU/board/BIOS and IP details for active physical adapters."""
+    command = (
+        "$cpu = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Name); "
+        "$board = Get-CimInstance Win32_BaseBoard -ErrorAction SilentlyContinue | Select-Object -First 1; "
+        "$bios = (Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty SMBIOSBIOSVersion); "
+        "$adapters = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }; "
+        "$ipRows = @(); "
+        "foreach ($adapter in $adapters) { "
+        "  $ips = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction SilentlyContinue | "
+        "    Where-Object { $_.AddressState -eq 'Preferred' -and $_.IPAddress -and $_.IPAddress -notlike 'fe80*' }; "
+        "  $ipv4 = @($ips | Where-Object { $_.AddressFamily -eq 'IPv4' } | Select-Object -ExpandProperty IPAddress); "
+        "  $ipv6 = @($ips | Where-Object { $_.AddressFamily -eq 'IPv6' } | Select-Object -ExpandProperty IPAddress); "
+        "  $ipRows += [PSCustomObject]@{ Adapter = $adapter.Name; IPv4 = $ipv4; IPv6 = $ipv6 }; "
+        "}; "
+        "[PSCustomObject]@{ "
+        "  CPU = $cpu; "
+        "  Motherboard = ((@($board.Manufacturer, $board.Product) | Where-Object { $_ }) -join ' '); "
+        "  BIOS = $bios; "
+        "  IP = $ipRows "
+        "} | ConvertTo-Json -Compress -Depth 4"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return {
+            "cpu": "Unable to query",
+            "motherboard": "Unable to query",
+            "bios": "Unable to query",
+            "ip": "Unable to query",
+        }
+
+    payload = parse_json_payload(output)
+    row = payload[0] if payload else {}
+    cpu_value = short_cpu_value(str(row.get("CPU", "")).strip()) if row.get("CPU") else "Unknown"
+    motherboard = _clean_short_hardware_value(str(row.get("Motherboard", "")).strip()) or "Unknown"
+    bios = _clean_short_hardware_value(str(row.get("BIOS", "")).strip()) or "Unknown"
+
+    ip_rows = row.get("IP")
+    ip_parts: list[str] = []
+    if isinstance(ip_rows, dict):
+        ip_rows = [ip_rows]
+    if isinstance(ip_rows, list):
+        for ip_row in ip_rows:
+            if not isinstance(ip_row, dict):
+                continue
+            adapter = str(ip_row.get("Adapter", "Adapter")).strip() or "Adapter"
+            ipv4_values = ip_row.get("IPv4")
+            ipv6_values = ip_row.get("IPv6")
+
+            ipv4_list = [str(ipv4_values).strip()] if isinstance(ipv4_values, str) else [str(v).strip() for v in ipv4_values or [] if str(v).strip()]
+            ipv6_list = [str(ipv6_values).strip()] if isinstance(ipv6_values, str) else [str(v).strip() for v in ipv6_values or [] if str(v).strip()]
+
+            if not ipv4_list and not ipv6_list:
+                continue
+            ip_parts.append(f"{adapter}: IPv4={', '.join(ipv4_list) if ipv4_list else '-'}, IPv6={', '.join(ipv6_list) if ipv6_list else '-'}")
+
+    return {
+        "cpu": cpu_value,
+        "motherboard": motherboard,
+        "bios": bios,
+        "ip": " | ".join(ip_parts) if ip_parts else "No IP address on active physical adapters",
+    }
+
+
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     """Parse JSON produced by PowerShell's ConvertTo-Json output."""
     text = raw_output.strip()
@@ -892,6 +990,17 @@ class SetupWorker(QtCore.QObject):
             )
 
         self.log_line.emit("")
+
+        self.step_started.emit("System information")
+        self.log_line.emit("System information")
+        self.log_line.emit("-" * 60)
+        system_info = detect_system_info(self._cancelled)
+        self.log_line.emit(format_kv_line("CPU", system_info["cpu"], width=12))
+        self.log_line.emit(format_kv_line("Motherboard", system_info["motherboard"], width=12))
+        self.log_line.emit(format_kv_line("BIOS", system_info["bios"], width=12))
+        self.log_line.emit(format_kv_line("IP", system_info["ip"], width=12))
+        self.log_line.emit("")
+        self.step_finished.emit("System information", True)
 
         if self._cancelled():
             self.completed.emit(False, "cancelled")
@@ -1313,6 +1422,15 @@ class MainWindow(QtWidgets.QWidget):
             )
             app_row.addWidget(open_button)
             self.manual_layout.addLayout(app_row)
+
+        self.manual_layout.addWidget(QtWidgets.QLabel(""))
+        info_title = QtWidgets.QLabel("Setup information")
+        info_font = info_title.font()
+        info_font.setBold(True)
+        info_title.setFont(info_font)
+        self.manual_layout.addWidget(info_title)
+        self.manual_info_form = QtWidgets.QFormLayout()
+        self.manual_layout.addLayout(self.manual_info_form)
         self.manual_layout.addStretch(1)
 
         self.installation_checklist_group = QtWidgets.QGroupBox("Installation PC checklist")
@@ -1323,8 +1441,8 @@ class MainWindow(QtWidgets.QWidget):
 
         self.installation_checklist_tree = QtWidgets.QTreeWidget()
         self.installation_checklist_tree.setObjectName("installationChecklistTree")
-        self.installation_checklist_tree.setColumnCount(3)
-        self.installation_checklist_tree.setHeaderLabels(["Task", "Status", "Info"])
+        self.installation_checklist_tree.setColumnCount(2)
+        self.installation_checklist_tree.setHeaderLabels(["Task", "Status"])
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setMouseTracking(True)
         self.installation_checklist_tree.setAlternatingRowColors(True)
@@ -1336,7 +1454,6 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.header().setStretchLastSection(False)
         self.installation_checklist_tree.header().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
         self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
-        self.installation_checklist_tree.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
         self.installation_checklist_tree.setColumnWidth(1, 110)
         self.installation_checklist_tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
@@ -1372,7 +1489,6 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_runtime_status: dict[str, tuple[str, str]] = {}
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
         self.checklist_item_states: dict[str, str] = {}
-        field_ids_rendered_in_sections: set[str] = set()
         for section in SECTIONS:
             section_header = QtWidgets.QTreeWidgetItem([section.label, "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
@@ -1402,91 +1518,17 @@ class MainWindow(QtWidgets.QWidget):
                 self.checklist_runtime_status[section_item.item_id] = ("PENDING", "Waiting")
                 self.checklist_item_states[section_item.item_id] = "UNCHECKED"
 
-                field = FIELDS_BY_ID.get(section_item.item_id) or FIELDS_BY_LABEL.get(section_item.label)
-                if field is None:
-                    continue
-                field_ids_rendered_in_sections.add(field.field_id)
-
-                if field.field_type == "date":
-                    value_input = QtWidgets.QDateEdit()
-                    value_input.setDisplayFormat("yyyy-MM-dd")
-                    value_input.setCalendarPopup(True)
-                    value_input.setDate(QtCore.QDate.currentDate())
-                    value_input.dateChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-                elif field.field_type == "numbering":
-                    value_input = QtWidgets.QComboBox()
-                    value_input.addItems([f"{number:02d}" for number in range(1, 100)])
-                    value_input.currentTextChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-                else:
-                    value_input = QtWidgets.QLineEdit()
-                    value_input.setPlaceholderText("Add details")
-                    if field.field_id == HOSTNAME_FIELD_ID:
-                        value_input.setReadOnly(True)
-                        value_input.setPlaceholderText("Auto-generated")
-                    value_input.textChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-
-                self.installation_checklist_tree.setItemWidget(checklist_item, 2, value_input)
-                self.checklist_info_inputs[field.field_id] = value_input
-
-        export_only_fields = [
-            field
-            for field in CHECKLIST_FIELDS
-            if field.field_id not in field_ids_rendered_in_sections and field.field_id not in HIDDEN_CHECKLIST_FIELD_IDS
-        ]
-        if export_only_fields:
-            section_header = QtWidgets.QTreeWidgetItem(["Info fields (export only)", "", ""])
-            section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
-            section_header.setFirstColumnSpanned(True)
-            section_font = section_header.font(0)
-            section_font.setBold(True)
-            section_header.setFont(0, section_font)
-            self.installation_checklist_tree.addTopLevelItem(section_header)
-
-            for field in export_only_fields:
-                info_item = QtWidgets.QTreeWidgetItem([wrap_task_label(field.label), "", ""])
-                info_item.setFlags(info_item.flags() & ~QtCore.Qt.ItemIsSelectable)
-                info_item.setData(0, QtCore.Qt.UserRole, field.field_id)
-                info_item.setToolTip(0, field.label)
-                self.installation_checklist_tree.addTopLevelItem(info_item)
-
-                if field.field_type == "date":
-                    value_input = QtWidgets.QDateEdit()
-                    value_input.setDisplayFormat("yyyy-MM-dd")
-                    value_input.setCalendarPopup(True)
-                    value_input.setDate(QtCore.QDate.currentDate())
-                    value_input.dateChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-                elif field.field_type == "numbering":
-                    value_input = QtWidgets.QComboBox()
-                    value_input.addItems([f"{number:02d}" for number in range(1, 100)])
-                    value_input.currentTextChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-                else:
-                    value_input = QtWidgets.QLineEdit()
-                    value_input.setPlaceholderText("Add details")
-                    if field.field_id == HOSTNAME_FIELD_ID:
-                        value_input.setReadOnly(True)
-                        value_input.setPlaceholderText("Auto-generated")
-                    value_input.textChanged.connect(
-                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
-                    )
-
-                self.installation_checklist_tree.setItemWidget(info_item, 2, value_input)
-                self.checklist_info_inputs[field.field_id] = value_input
+        info_fields = [field for field in CHECKLIST_FIELDS if field.field_id not in HIDDEN_CHECKLIST_FIELD_IDS]
+        for field in info_fields:
+            value_input = self._create_checklist_info_input(field)
+            self.manual_info_form.addRow(f"{field.label}:", value_input)
+            self.checklist_info_inputs[field.field_id] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
         self.installation_checklist_tree.itemEntered.connect(self._on_checklist_item_hovered)
         self.installation_checklist_tree.customContextMenuRequested.connect(self._on_checklist_context_menu)
-        self.installation_checklist_tree.resizeColumnToContents(2)
+        self.installation_checklist_tree.resizeColumnToContents(1)
         self.installation_checklist_tree.setColumnWidth(1, 110)
         self._ensure_profile_storage()
         self._refresh_profile_selector()
@@ -1535,6 +1577,7 @@ class MainWindow(QtWidgets.QWidget):
 
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
+        self._active_worker_mode: str = ""
 
         self._apply_checklist_autofill()
 
@@ -1621,7 +1664,58 @@ class MainWindow(QtWidgets.QWidget):
         if field_id == HOSTNAME_FIELD_ID:
             self.rename_input.setText(self._get_checklist_info_text(HOSTNAME_FIELD_ID))
 
+        self._sync_checklist_item_from_info_field(field_id)
+
         self._save_installation_checklist_state()
+
+    def _create_checklist_info_input(self, field) -> QtWidgets.QWidget:
+        if field.field_type == "date":
+            value_input = QtWidgets.QDateEdit()
+            value_input.setDisplayFormat("yyyy-MM-dd")
+            value_input.setCalendarPopup(True)
+            value_input.setDate(QtCore.QDate.currentDate())
+            value_input.dateChanged.connect(
+                lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            return value_input
+
+        if field.field_type == "numbering":
+            value_input = QtWidgets.QComboBox()
+            value_input.addItems([f"{number:02d}" for number in range(1, 100)])
+            value_input.currentTextChanged.connect(
+                lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            return value_input
+
+        value_input = QtWidgets.QLineEdit()
+        value_input.setPlaceholderText("Add details")
+        if field.field_id == HOSTNAME_FIELD_ID:
+            value_input.setReadOnly(True)
+            value_input.setPlaceholderText("Auto-generated")
+        value_input.textChanged.connect(
+            lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+        )
+        return value_input
+
+    def _sync_checklist_item_from_info_field(self, field_id: str) -> None:
+        task_id = CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID.get(field_id)
+        if not task_id:
+            return
+
+        item = self.checklist_item_by_id.get(task_id)
+        if item is None or self.checklist_item_states.get(task_id) == "NA":
+            return
+
+        value = self._get_checklist_field_value(field_id).strip()
+        if value:
+            self.checklist_item_states[task_id] = "CHECKED"
+            item.setCheckState(0, QtCore.Qt.Checked)
+            self._set_checklist_item_status(task_id, "PASS", "Filled from setup information")
+            return
+
+        if item.checkState(0) != QtCore.Qt.Checked:
+            self.checklist_item_states[task_id] = "UNCHECKED"
+            self._set_checklist_item_status(task_id, "PENDING", "Waiting for setup information")
 
     def _apply_checklist_autofill(self) -> None:
         hostname_text = self._build_hostname_value()
@@ -1629,6 +1723,8 @@ class MainWindow(QtWidgets.QWidget):
         self._autofill_line_edit(HOSTNAME_FIELD_ID, hostname_text)
         self._autofill_line_edit(FILE_NAME_FIELD_ID, file_name_text)
         self.rename_input.setText(hostname_text)
+        for field_id in CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID:
+            self._sync_checklist_item_from_info_field(field_id)
 
     def _set_checklist_item_status(self, task_id: str, status: str, detail: str) -> None:
         if status not in STATUS_CHIP_STATES:
@@ -1809,7 +1905,7 @@ class MainWindow(QtWidgets.QWidget):
             )
             for item in self.installation_checklist_items
         }
-        checklist_info = {key: self._read_checklist_info_value(widget) for key, widget in self.checklist_info_inputs.items()}
+        checklist_info = {field.field_id: self._get_checklist_field_value(field.field_id) for field in CHECKLIST_FIELDS}
         save_checklist_state(profile_path, checklist_state, checklist_info)
         self._refresh_profile_selector()
         idx = self.profile_selector.findData(str(profile_path))
@@ -2074,6 +2170,7 @@ class MainWindow(QtWidgets.QWidget):
     def _start_worker(self, worker: SetupWorker) -> None:
         self._worker_thread = QtCore.QThread(self)
         self._worker = worker
+        self._active_worker_mode = worker._mode
         self._worker.moveToThread(self._worker_thread)
 
         worker.log_line.connect(self._append)
@@ -2096,6 +2193,7 @@ class MainWindow(QtWidgets.QWidget):
         self.cancel_button.setEnabled(False)
 
     def _on_worker_completed(self, success: bool, reason: str) -> None:
+        completed_mode = self._active_worker_mode
         if reason == 'cancelled':
             self._append('[INFO] Operation cancelled.')
         elif not success:
@@ -2103,6 +2201,29 @@ class MainWindow(QtWidgets.QWidget):
         self._set_execution_state(False)
         self._worker = None
         self._worker_thread = None
+        self._active_worker_mode = ""
+        if completed_mode == "apply" and reason != "cancelled":
+            self._show_restart_prompt()
+
+    def _show_restart_prompt(self) -> None:
+        message = QtWidgets.QMessageBox(self)
+        message.setIcon(QtWidgets.QMessageBox.Information)
+        message.setWindowTitle("Restart may be needed")
+        message.setText("Run completed. A restart may be needed.")
+        restart_now = message.addButton("Restart now", QtWidgets.QMessageBox.AcceptRole)
+        message.addButton("Restart later", QtWidgets.QMessageBox.RejectRole)
+        message.exec_()
+        if message.clickedButton() != restart_now:
+            self._append("[INFO] Restart postponed by user.")
+            return
+
+        if not is_windows():
+            self._append("[WARN] Restart now is only supported on Windows.")
+            return
+
+        rc, _ = run_command_with_options(["shutdown", "/r", "/t", "0"], timeout_sec=10)
+        if rc != 0:
+            self._append("[WARN] Failed to trigger immediate restart.")
 
     def _run_inspect(self) -> None:
         worker = SetupWorker(mode='inspect', rename_target=self.rename_input.text().strip())
