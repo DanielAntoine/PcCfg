@@ -22,7 +22,7 @@ from typing import Callable, Sequence
 from PyQt5 import QtCore, QtGui, QtWidgets
 
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 APP_EXE_NAME = f"PcCfg-v{APP_VERSION}"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 APP_ICON_NAME = "PCSetup.ico"
