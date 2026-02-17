@@ -1897,6 +1897,7 @@ class MainWindow(QtWidgets.QWidget):
         }
         checklist_info = {field.field_id: self._get_checklist_field_value(field.field_id) for field in CHECKLIST_FIELDS}
         save_checklist_state(CHECKLIST_LOG_FILE, checklist_state, checklist_info)
+        self._append(f"[INFO] Checklist autosaved to: {CHECKLIST_LOG_FILE.resolve()}")
 
     def _load_installation_checklist_state(self) -> None:
         try:
@@ -1932,6 +1933,7 @@ class MainWindow(QtWidgets.QWidget):
         if not DEFAULT_PROFILE_FILE.exists():
             default_payload = {"items": {}, "info": {}}
             DEFAULT_PROFILE_FILE.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
+            self._append(f"[INFO] Default profile initialized at: {DEFAULT_PROFILE_FILE.resolve()}")
 
     def _refresh_profile_selector(self) -> None:
         profiles = sorted(CHECKLIST_PROFILE_DIR.glob("*.json"))
@@ -2005,9 +2007,9 @@ class MainWindow(QtWidgets.QWidget):
         if idx >= 0:
             self.profile_selector.setCurrentIndex(idx)
         if save_as_default:
-            self._append("[INFO] Default profile saved. Use Reload profile to apply saved profile values.")
+            self._append(f"[INFO] Default profile saved to: {profile_path.resolve()}. Use Reload profile to apply saved profile values.")
         else:
-            self._append(f"[INFO] Profile saved: {profile_path.name}. Use Reload profile to apply saved profile values.")
+            self._append(f"[INFO] Profile saved to: {profile_path.resolve()}. Use Reload profile to apply saved profile values.")
 
     def _reload_selected_profile(self) -> None:
         profile_path = self._selected_profile_path()
@@ -2114,7 +2116,7 @@ class MainWindow(QtWidgets.QWidget):
             )
             return
 
-        self._append(f"[INFO] Report saved to: {selected_path}")
+        self._append(f"[INFO] Report saved to: {Path(selected_path).resolve()}")
         self._open_text_file(selected_path, "Save Report")
 
     def _export_installation_report(self) -> None:
@@ -2170,7 +2172,7 @@ class MainWindow(QtWidgets.QWidget):
             )
             return
 
-        self._append(f"[INFO] Installation report exported to: {selected_path}")
+        self._append(f"[INFO] Installation report exported to: {Path(selected_path).resolve()}")
         self._open_text_file(selected_path, "Export installation report")
 
     def _get_checklist_field_value(self, field_id: str) -> str:
