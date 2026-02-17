@@ -32,9 +32,9 @@ INSTALL_APPS: tuple[InstallApp, ...] = (
 
 MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
     ManualInstallApp("davinci_resolve", "DaVinci Resolve", "Video editing / color grading", "https://www.blackmagicdesign.com/products/davinciresolve"),
+    ManualInstallApp("creative_cloud", "Adobe Creative Cloud", "Creative suite management", "https://www.adobe.com/creativecloud/desktop-app.html"),
     ManualInstallApp("blackmagic_desktop_video", "Blackmagic Desktop Video", "Capture cards / I/O", "https://www.blackmagicdesign.com/support/family/capture-and-playback"),
     ManualInstallApp("vmix", "vMix", "Live production / switching", "https://www.vmix.com/software/download.aspx"),
-    ManualInstallApp("streamdeck", "Elgato Stream Deck", "Control surfaces", "https://www.elgato.com/downloads"),
     ManualInstallApp("nvidia_drivers", "NVIDIA Drivers", "GPU drivers", "https://www.nvidia.com/Download/index.aspx"),
     ManualInstallApp("screenconnect", "ScreenConnect", "Remote support", "https://screenconnect.connectwise.com/download"),
 )
