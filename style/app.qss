@@ -236,10 +236,10 @@ QTreeWidget#installationChecklistTree::item {
     padding-top: 2px;
     padding-bottom: 2px;
 }
-
 QTreeWidget#installationChecklistTree::item:selected {
-    background-color: #2a3542;
+    background-color: #1a1a1a;
 }
+
 
 QLabel#checklistStatusChip {
     border-radius: 10px;
