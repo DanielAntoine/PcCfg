@@ -368,9 +368,15 @@ class DragCheckTreeWidget(QtWidgets.QTreeWidget):
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() == QtCore.Qt.LeftButton:
             item = self.itemAt(event.pos())
-            if item is not None and self._is_task_item(item):
+            if (
+                item is not None
+                and self._is_task_item(item)
+                and self._is_checkbox_hit(item, event.pos())
+            ):
                 self._drag_check_active = True
-                self._drag_check_state = QtCore.Qt.Checked
+                self._drag_check_state = (
+                    QtCore.Qt.Unchecked if item.checkState(0) == QtCore.Qt.Checked else QtCore.Qt.Checked
+                )
                 self._drag_check_last_item = None
                 self._apply_drag_check(item)
                 event.accept()
@@ -404,6 +410,17 @@ class DragCheckTreeWidget(QtWidgets.QTreeWidget):
     def _is_task_item(item: QtWidgets.QTreeWidgetItem) -> bool:
         task_id = item.data(0, QtCore.Qt.UserRole)
         return isinstance(task_id, str) and bool(task_id)
+
+    def _is_checkbox_hit(self, item: QtWidgets.QTreeWidgetItem, position: QtCore.QPoint) -> bool:
+        option = QtWidgets.QStyleOptionViewItem()
+        option.initFrom(self.viewport())
+        option.rect = self.visualItemRect(item)
+        indicator_rect = self.style().subElementRect(
+            QtWidgets.QStyle.SE_ItemViewItemCheckIndicator,
+            option,
+            self,
+        )
+        return indicator_rect.contains(position)
 
 
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
