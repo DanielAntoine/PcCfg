@@ -16,12 +16,19 @@ TECHNICIAN_DEFAULT_OPTIONS: tuple[str, ...] = (
     "Dominic Bourget",
     "Eric Nolin",
     "Adam Giraudias",
-)
+=======
+COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
+    "Editor",
+    "Colorimetrie",
+    "Server",
+    "Datawringling",
+
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("client_name", "Client name", "text"),
     ChecklistField("computer_role", "Computer role", "text"),
     ChecklistField("numbering", "Numbering00 (e.g., 01, 02, 03)", "numbering"),
+
     ChecklistField("hostname", "Hostname/User: {ClientNamePascal}-{Role4LUpper}-{numbering00}", "text"),
     ChecklistField("inventory_id", "Inventory ID", "text"),
     ChecklistField("technician", "Technicien", "technician"),
@@ -78,6 +85,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         "windows_update_drivers",
         "4) Windows Update + Drivers",
         (
+
             ChecklistItem("rename_pc", "Rename the PC ({ClientNamePascal}-{Role4LUpper}-{numbering00})"),
             ChecklistItem("windows_update", 'Run Windows Update until "Up to date"'),
             ChecklistItem("install_chipset", "Install chipset drivers"),

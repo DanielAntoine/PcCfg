@@ -36,6 +36,7 @@ from pccfg.domain.checklist import (
     CHECKLIST_LOG_FILE,
     CHECKLIST_PROFILE_DIR,
     DEFAULT_PROFILE_FILE,
+    COMPUTER_ROLE_OPTIONS,
     CHECKLIST_TASK_MAX_LEN,
     TECHNICIAN_DEFAULT_OPTIONS,
     FIELD_IDS_BY_LABEL,
@@ -95,6 +96,7 @@ SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
 )
 SOFTWARE_DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
 SOFTWARE_DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
+COMPUTER_ROLE_FIELD_CHOICES = ("", *COMPUTER_ROLE_OPTIONS)
 
 COMMAND_CANCEL_EXIT_CODE = -9
 COMMAND_TIMEOUT_EXIT_CODE = -124
@@ -1689,6 +1691,14 @@ class MainWindow(QtWidgets.QWidget):
         self._save_installation_checklist_state()
 
     def _create_checklist_info_input(self, field) -> QtWidgets.QWidget:
+        if field.field_id == COMPUTER_ROLE_FIELD_ID:
+            value_input = QtWidgets.QComboBox()
+            value_input.addItems(COMPUTER_ROLE_FIELD_CHOICES)
+            value_input.currentTextChanged.connect(
+                lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            return value_input
+
         if field.field_type == "date":
             value_input = QtWidgets.QDateEdit()
             value_input.setDisplayFormat("yyyy-MM-dd")
@@ -1809,11 +1819,14 @@ class MainWindow(QtWidgets.QWidget):
 
     def _build_hostname_value(self) -> str:
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
+        client_hostname = (client_name[:6]).ljust(6, "X")
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
         if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return ""
+
         return f"{client_name}-{role_value[:4]}-{numbering_value}"
+
 
     @staticmethod
     def _to_alnum(value: str) -> str:
@@ -1896,7 +1909,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(key, "NA", "Not applicable")
 
             for key, widget in self.checklist_info_inputs.items():
-                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
+                self._set_checklist_info_value(key, widget, persisted_info.get(key, ""))
         finally:
             self._is_loading_checklist_state = False
 
@@ -1971,7 +1984,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(key, "PENDING", "Waiting")
 
             for key, widget in self.checklist_info_inputs.items():
-                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
+                self._set_checklist_info_value(key, widget, persisted_info.get(key, ""))
         finally:
             self._is_loading_checklist_state = False
 
@@ -2000,8 +2013,8 @@ class MainWindow(QtWidgets.QWidget):
                 if isinstance(task_id, str):
                     self.checklist_item_states[task_id] = "UNCHECKED"
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
-            for widget in self.checklist_info_inputs.values():
-                self._set_checklist_info_value(widget, "")
+            for field_id, widget in self.checklist_info_inputs.items():
+                self._set_checklist_info_value(field_id, widget, "")
             self._apply_default_software_states()
         finally:
             self._is_loading_checklist_state = False
@@ -2132,7 +2145,7 @@ class MainWindow(QtWidgets.QWidget):
             return widget.date().toString("yyyy-MM-dd")
         return ""
 
-    def _set_checklist_info_value(self, widget: QtWidgets.QWidget, value: str) -> None:
+    def _set_checklist_info_value(self, field_id: str, widget: QtWidgets.QWidget, value: str) -> None:
         if isinstance(widget, QtWidgets.QLineEdit):
             widget.setText(value)
             return
@@ -2142,6 +2155,7 @@ class MainWindow(QtWidgets.QWidget):
                 widget.setCurrentText(value)
                 return
             normalized_value = self._normalize_numbering_value(value)
+
             index = widget.findText(normalized_value)
             widget.setCurrentIndex(index if index >= 0 else 0)
             return
