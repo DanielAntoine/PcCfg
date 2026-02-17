@@ -127,3 +127,14 @@ Install-Package <name> -Force -Confirm:$false
   - Keep implementation style consistent with the rest of the app.
   - Mark as `PASS` when update process completes successfully.
   - If reboot is required, prompt the user from the app.
+- [ ] can "Run" even when hostname missing execpt for "Rename computer"
+- [ ] add print in inspect 
+  - cpu 
+  - motherboard
+  - bios version
+  - ip
+  - hostname
+- [ ] after "Run" pop up  "restart may be needed" if a restart may be needed
+- [ ] add to "apply option" and "checklist" set up for  "remote desktop"
+- [ ] add https://www.nvidia.com/Download/index.aspx to "manual install"
+- [ ] open report after save
