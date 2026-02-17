@@ -103,6 +103,20 @@ COMMAND_TIMEOUT_EXIT_CODE = -124
 DEFAULT_INSPECT_TIMEOUT_SEC = 30
 DEFAULT_APPLY_TIMEOUT_SEC = 120
 DEFAULT_INSTALL_TIMEOUT_SEC = 1200
+INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
+    "Blackmagic DeckLink",
+    "Blackmagic UltraStudio",
+    "AJA Video Card",
+    "10GbE NIC",
+    "25GbE NIC",
+    "RAID Controller",
+    "USB Expansion Card",
+    "Thunderbolt Expansion Card",
+    "SAS HBA Controller",
+    "Fiber Channel HBA",
+    "SDI I/O Card",
+    "Other",
+)
 
 
 @overload
@@ -1356,6 +1370,78 @@ class SetupWorker(QtCore.QObject):
         self.completed.emit(True, "done")
 
 
+class InstalledCardsInput(QtWidgets.QWidget):
+    changed = QtCore.pyqtSignal()
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.choices = QtWidgets.QComboBox()
+        self.choices.addItems(INSTALLED_CARD_OPTIONS)
+        self.add_selected_button = QtWidgets.QPushButton("Add")
+        self.manual_input = QtWidgets.QLineEdit()
+        self.manual_input.setPlaceholderText("Manual card name")
+        self.add_manual_button = QtWidgets.QPushButton("Add manual")
+        self.items = QtWidgets.QListWidget()
+        self.items.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.remove_button = QtWidgets.QPushButton("Remove selected")
+
+        root = QtWidgets.QVBoxLayout(self)
+        pick_row = QtWidgets.QHBoxLayout()
+        pick_row.addWidget(self.choices, stretch=1)
+        pick_row.addWidget(self.add_selected_button)
+
+        manual_row = QtWidgets.QHBoxLayout()
+        manual_row.addWidget(self.manual_input, stretch=1)
+        manual_row.addWidget(self.add_manual_button)
+
+        root.addLayout(pick_row)
+        root.addLayout(manual_row)
+        root.addWidget(self.items)
+        root.addWidget(self.remove_button)
+
+        self.add_selected_button.clicked.connect(lambda: self._add_value(self.choices.currentText()))
+        self.add_manual_button.clicked.connect(lambda: self._add_value(self.manual_input.text()))
+        self.manual_input.returnPressed.connect(lambda: self._add_value(self.manual_input.text()))
+        self.remove_button.clicked.connect(self._remove_selected)
+
+    def values(self) -> list[str]:
+        return [self.items.item(index).text() for index in range(self.items.count())]
+
+    def text_value(self) -> str:
+        return ", ".join(self.values())
+
+    def set_values_from_text(self, value: str) -> None:
+        self.items.clear()
+        if not value:
+            return
+        for raw_part in re.split(r"[,;\n]+", value):
+            part = raw_part.strip()
+            if part:
+                self._add_value(part, emit_signal=False)
+
+    def _add_value(self, value: str, emit_signal: bool = True) -> None:
+        candidate = value.strip()
+        if not candidate:
+            return
+
+        for existing in self.values():
+            if existing.casefold() == candidate.casefold():
+                self.manual_input.clear()
+                return
+
+        self.items.addItem(candidate)
+        self.manual_input.clear()
+        if emit_signal:
+            self.changed.emit()
+
+    def _remove_selected(self) -> None:
+        row = self.items.currentRow()
+        if row < 0:
+            return
+        self.items.takeItem(row)
+        self.changed.emit()
+
+
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -1732,6 +1818,13 @@ class MainWindow(QtWidgets.QWidget):
             )
             return value_input
 
+        if field.field_id == "installed_cards":
+            value_input = InstalledCardsInput()
+            value_input.changed.connect(
+                lambda field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            return value_input
+
         value_input = QtWidgets.QLineEdit()
         value_input.setPlaceholderText("Add details")
         if field.field_id == HOSTNAME_FIELD_ID:
@@ -1860,6 +1953,8 @@ class MainWindow(QtWidgets.QWidget):
 
     def _get_checklist_info_text(self, field_label: str) -> str:
         widget = self.checklist_info_inputs.get(field_label)
+        if isinstance(widget, InstalledCardsInput):
+            return widget.text_value().strip()
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
         if isinstance(widget, QtWidgets.QComboBox):
@@ -2137,6 +2232,8 @@ class MainWindow(QtWidgets.QWidget):
         return self._read_checklist_info_value(widget) if widget is not None else ""
 
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
+        if isinstance(widget, InstalledCardsInput):
+            return widget.text_value().strip()
         if isinstance(widget, QtWidgets.QLineEdit):
             return widget.text().strip()
         if isinstance(widget, QtWidgets.QComboBox):
@@ -2146,6 +2243,9 @@ class MainWindow(QtWidgets.QWidget):
         return ""
 
     def _set_checklist_info_value(self, field_id: str, widget: QtWidgets.QWidget, value: str) -> None:
+        if isinstance(widget, InstalledCardsInput):
+            widget.set_values_from_text(value)
+            return
         if isinstance(widget, QtWidgets.QLineEdit):
             widget.setText(value)
             return
