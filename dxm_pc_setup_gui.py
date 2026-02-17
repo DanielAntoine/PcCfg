@@ -419,43 +419,65 @@ class DragCheckBoxEventFilter(QtCore.QObject):
         super().__init__(parent)
         self._drag_active = False
         self._drag_state = False
+        self._drag_hover_checkbox: DragCheckBox | None = None
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
         self._stop_drag_if_released()
 
-        if isinstance(watched, QtWidgets.QCheckBox):
+        if self._drag_active and event.type() == QtCore.QEvent.MouseMove:
+            if QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton:
+                self._apply_drag_to_cursor_checkbox()
+
+        if isinstance(watched, DragCheckBox):
             if event.type() == QtCore.QEvent.MouseButtonPress:
                 mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
                 if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton:
                     self._drag_active = True
                     self._drag_state = not watched.isChecked()
                     watched.setChecked(self._drag_state)
-                    event.accept()
-                    return True
-
-            if event.type() in {QtCore.QEvent.MouseMove, QtCore.QEvent.Enter}:
-                if self._drag_active and (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
-                    watched.setChecked(self._drag_state)
+                    self._drag_hover_checkbox = watched
                     event.accept()
                     return True
 
             if event.type() == QtCore.QEvent.MouseButtonRelease:
                 mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
                 if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton and self._drag_active:
-                    self._drag_active = False
+                    self._stop_drag()
                     event.accept()
                     return True
 
         elif self._drag_active and event.type() == QtCore.QEvent.MouseButtonRelease:
             mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
             if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton:
-                self._drag_active = False
+                self._stop_drag()
 
         return super().eventFilter(watched, event)
 
     def _stop_drag_if_released(self) -> None:
         if self._drag_active and not (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
-            self._drag_active = False
+            self._stop_drag()
+
+    def _stop_drag(self) -> None:
+        self._drag_active = False
+        self._drag_hover_checkbox = None
+
+    def _apply_drag_to_cursor_checkbox(self) -> None:
+        checkbox = self._drag_checkbox_at_cursor()
+        if checkbox is None:
+            self._drag_hover_checkbox = None
+            return
+        if checkbox is self._drag_hover_checkbox:
+            return
+        checkbox.setChecked(self._drag_state)
+        self._drag_hover_checkbox = checkbox
+
+    def _drag_checkbox_at_cursor(self) -> DragCheckBox | None:
+        widget = QtWidgets.QApplication.widgetAt(QtGui.QCursor.pos())
+        while widget is not None:
+            if isinstance(widget, DragCheckBox):
+                return widget
+            widget = widget.parentWidget()
+        return None
 
 
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
