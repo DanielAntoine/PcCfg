@@ -26,6 +26,8 @@ INSTALL_APPS: tuple[InstallApp, ...] = (
     InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support"),
     InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support"),
     InstallApp("parsec", "Parsec", "Parsec.Parsec", "Remote support"),
+    InstallApp("companion", "Bitfocus Companion", "Bitfocus.Companion", "Control surfaces"),
+    InstallApp("streamdeck", "Elgato Stream Deck", "Elgato.StreamDeck", "Control surfaces"),
 )
 
 MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
@@ -33,5 +35,6 @@ MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
     ManualInstallApp("blackmagic_desktop_video", "Blackmagic Desktop Video", "Capture cards / I/O", "https://www.blackmagicdesign.com/support/family/capture-and-playback"),
     ManualInstallApp("vmix", "vMix", "Live production / switching", "https://www.vmix.com/software/download.aspx"),
     ManualInstallApp("streamdeck", "Elgato Stream Deck", "Control surfaces", "https://www.elgato.com/downloads"),
+    ManualInstallApp("nvidia_drivers", "NVIDIA Drivers", "GPU drivers", "https://www.nvidia.com/Download/index.aspx"),
     ManualInstallApp("screenconnect", "ScreenConnect", "Remote support", "https://screenconnect.connectwise.com/download"),
 )
