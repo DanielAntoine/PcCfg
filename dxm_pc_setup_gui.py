@@ -26,6 +26,9 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 
 APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
+APP_ICON_NAME = "PCSetup.ico"
+APP_ICON_PATH = Path(__file__).resolve().parent / "Icon" / APP_ICON_NAME
+APP_ID = "DXM.PCSetup"
 CHECKLIST_WRAP_LINE_LEN = 64
 STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
 MANUAL_STATUS_CYCLE = ("PENDING", "PASS", "FAIL", "NA")
@@ -217,6 +220,24 @@ def relaunch_as_admin() -> bool:
         return result > 32
     except Exception:
         return False
+
+
+def set_windows_app_user_model_id(app_id: str) -> None:
+    """Set an explicit Windows AppUserModelID so taskbar/start icon uses app branding."""
+    if not is_windows():
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        # Icon setup should never prevent the app from launching.
+        pass
+
+
+def load_app_icon() -> QtGui.QIcon:
+    """Load the app icon from ./Icon/PCSetup.ico if available."""
+    if APP_ICON_PATH.exists():
+        return QtGui.QIcon(str(APP_ICON_PATH))
+    return QtGui.QIcon()
 
 
 def load_stylesheet() -> str:
@@ -1632,6 +1653,9 @@ class MainWindow(QtWidgets.QWidget):
         if app is not None:
             app.installEventFilter(self._drag_checkbox_filter)
         self.setWindowTitle(APP_NAME)
+        icon = load_app_icon()
+        if not icon.isNull():
+            self.setWindowIcon(icon)
         self.resize(920, 700)
 
         self.select_all_checkbox = DragCheckBox("Select all APPLY options")
@@ -2766,7 +2790,11 @@ def main() -> int:
         print("[ERROR] Administrator privileges are required to start this app.")
         return 1
 
+    set_windows_app_user_model_id(APP_ID)
     app = QtWidgets.QApplication(sys.argv)
+    icon = load_app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
     app.setStyleSheet(load_stylesheet())
     window = MainWindow()
     window.show()
