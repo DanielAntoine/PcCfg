@@ -62,7 +62,6 @@ CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
     INVENTORY_ID_FIELD_ID: INVENTORY_ID_FIELD_ID,
     "technician": "technician",
     "installed_cards": "installed_cards",
-    "device_manager_validation": "devmgr_validation",
     "screenconnect_id": "record_scid",
 }
 
@@ -513,6 +512,23 @@ def detect_software_installation(winget_id: str, cancel_requested: Callable[[], 
         cancel_requested=cancel_requested,
     )
     if rc != 0:
+        if winget_id == "Google.Chrome":
+            chrome_paths = [
+                "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
+            ]
+            fallback_command = (
+                "$paths=@(" + ",".join(f"'{path}'" for path in chrome_paths) + "); "
+                "if (($paths | Where-Object { Test-Path $_ } | Select-Object -First 1) -or (Get-Command chrome -ErrorAction SilentlyContinue)) { 'Installed' }"
+            )
+            fallback_rc, fallback_output = run_command_with_options(
+                ["powershell", "-NoProfile", "-Command", fallback_command],
+                timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+                cancel_requested=cancel_requested,
+            )
+            if fallback_rc == 0 and compact_single_line(fallback_output):
+                return True, "Installed (fallback detection)"
         return None, "Unable to query"
 
     lowered = output.lower()
@@ -1429,7 +1445,7 @@ class MainWindow(QtWidgets.QWidget):
         info_font.setBold(True)
         info_title.setFont(info_font)
         self.manual_layout.addWidget(info_title)
-        self.manual_info_form = QtWidgets.QFormLayout()
+        self.manual_info_form = QtWidgets.QVBoxLayout()
         self.manual_layout.addLayout(self.manual_info_form)
         self.manual_layout.addStretch(1)
 
@@ -1520,8 +1536,11 @@ class MainWindow(QtWidgets.QWidget):
 
         info_fields = [field for field in CHECKLIST_FIELDS if field.field_id not in HIDDEN_CHECKLIST_FIELD_IDS]
         for field in info_fields:
+            field_label = QtWidgets.QLabel(f"{field.label}:")
+            field_label.setObjectName("setupInfoLabel")
             value_input = self._create_checklist_info_input(field)
-            self.manual_info_form.addRow(f"{field.label}:", value_input)
+            self.manual_info_form.addWidget(field_label)
+            self.manual_info_form.addWidget(value_input)
             self.checklist_info_inputs[field.field_id] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
