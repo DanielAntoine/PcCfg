@@ -123,18 +123,23 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Disk usage detection automation:
   - Detect disks that are not used for anything (no meaningful mounted/active volume usage), rather than only checking drive-letter assignment.
 - [ ] Windows Update automation:
-  - Fully automate scan/download/install.
+  - Automate scan/download/install for quality, security, and driver updates.
+  - Stop after first pass and prompt user when another pass/restart is needed.
   - Keep implementation style consistent with the rest of the app.
-  - Mark as `PASS` when update process completes successfully.
-  - If reboot is required, prompt the user from the app.
-- [ ] can "Run" even when hostname missing execpt for "Rename computer"
-- [ ] add print in inspect 
-  - cpu 
-  - motherboard
-  - bios version
-  - ip
-  - hostname
-- [ ] after "Run" pop up  "restart may be needed" if a restart may be needed
-- [ ] add to "apply option" and "checklist" set up for  "remote desktop"
-- [ ] add https://www.nvidia.com/Download/index.aspx to "manual install"
-- [ ] open report after save
+  - Mark as `PASS` when no critical updates remain.
+- [ ] Allow Run when hostname is missing, but block only "Rename computer" until hostname format requirements are met.
+- [ ] Add Inspect output (informational only) to log console and report output:
+  - CPU (short value)
+  - Motherboard (short value)
+  - BIOS version (short value)
+  - IP (IPv4 + IPv6 across all adapters)
+  - Hostname
+- [ ] After Run, show "restart may be needed" popup only for specific actions that can require reboot:
+  - Dialog buttons: `Restart now` and `Restart later`.
+  - Include which tasks triggered reboot requirement.
+- [ ] Add Remote Desktop setup to Apply options + checklist as one item:
+  - Enable RDP service.
+  - Allow firewall rule.
+  - Enable NLA.
+- [ ] Add `https://www.nvidia.com/Download/index.aspx` to Manual Install list only.
+- [ ] Open text report automatically after save; show dialog if opening fails.
