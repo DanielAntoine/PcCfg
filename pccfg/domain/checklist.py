@@ -16,12 +16,14 @@ TECHNICIAN_DEFAULT_OPTIONS: tuple[str, ...] = (
     "Dominic Bourget",
     "Eric Nolin",
     "Adam Giraudias",
-=======
+)
+
 COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
     "Editor",
     "Colorimetrie",
     "Server",
     "Datawringling",
+)
 
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
