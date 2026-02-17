@@ -144,3 +144,4 @@ Install-Package <name> -Force -Confirm:$false
 - [ ] Add `https://www.nvidia.com/Download/index.aspx` to Manual Install list only.
 - [ ] Open text report automatically after save; show dialog if opening fails.
 - [ ] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
+- [ ]add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck
