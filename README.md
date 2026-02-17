@@ -134,6 +134,6 @@ Install-Package <name> -Force -Confirm:$false
 - [x] dont show hostname date filename in checklist
 
 ## TODO
-- [ ] Add Inspect output (informational only) to log console and report output ,CPU (short value) ,Motherboard (short value), BIOS version (short value), IP (IPv4 + IPv6 across all adapters)
-- [ ] After Run, show "restart may be needed" add a Dialog buttons: `Restart now` and `Restart later`.
-- [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
+- [x] Add Inspect output (informational only) to log console and report output ,CPU (short value) ,Motherboard (short value), BIOS version (short value), IP (IPv4 + IPv6 across all adapters)
+- [x] After Run, show "restart may be needed" add a Dialog buttons: `Restart now` and `Restart later`.
+- [x] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
