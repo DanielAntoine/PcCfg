@@ -524,63 +524,79 @@ def detect_remote_desktop_readiness(cancel_requested: Callable[[], bool] | None 
 
 def detect_software_installation(winget_id: str, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
     """Check if software is installed using winget list."""
+    fallback_checks: dict[str, tuple[list[str], list[str]]] = {
+        "Google.Chrome": (
+            [
+                "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
+            ],
+            ["chrome"],
+        ),
+        "Bitfocus.Companion": (
+            [
+                "${env:ProgramFiles}\\Companion\\Companion.exe",
+                "${env:ProgramFiles(x86)}\\Companion\\Companion.exe",
+                "${env:LocalAppData}\\Programs\\Companion\\Companion.exe",
+            ],
+            ["Companion"],
+        ),
+        "Elgato.StreamDeck": (
+            [
+                "${env:ProgramFiles}\\Elgato\\StreamDeck\\StreamDeck.exe",
+                "${env:ProgramFiles(x86)}\\Elgato\\StreamDeck\\StreamDeck.exe",
+                "${env:LocalAppData}\\Elgato\\StreamDeck\\StreamDeck.exe",
+            ],
+            ["StreamDeck"],
+        ),
+    }
+
+    def _fallback_probe() -> tuple[bool | None, str] | None:
+        fallback = fallback_checks.get(winget_id)
+        if not fallback:
+            return None
+
+        fallback_paths, fallback_commands = fallback
+        fallback_command = (
+            "$paths=@(" + ",".join(f"'{path}'" for path in fallback_paths) + "); "
+            "$commands=@(" + ",".join(f"'{name}'" for name in fallback_commands) + "); "
+            "$pathHit = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; "
+            "$commandHit = $commands | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1; "
+            "if ($pathHit) { $pathHit } elseif ($commandHit) { $commandHit }"
+        )
+        fallback_rc, fallback_output = run_command_with_options(
+            ["powershell", "-NoProfile", "-Command", fallback_command],
+            timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+            cancel_requested=cancel_requested,
+        )
+        fallback_hit = compact_single_line(fallback_output)
+        if fallback_rc == 0 and fallback_hit:
+            return True, f"Installed (fallback: {fallback_hit})"
+        return None
+
     rc, output = run_command_with_options(
         ["winget", "list", "--id", winget_id, "-e", "--accept-source-agreements"],
         timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
         cancel_requested=cancel_requested,
     )
     if rc != 0:
-        fallback_checks: dict[str, tuple[list[str], list[str]]] = {
-            "Google.Chrome": (
-                [
-                    "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
-                    "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
-                    "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
-                ],
-                ["chrome"],
-            ),
-            "Bitfocus.Companion": (
-                [
-                    "${env:ProgramFiles}\\Companion\\Companion.exe",
-                    "${env:ProgramFiles(x86)}\\Companion\\Companion.exe",
-                    "${env:LocalAppData}\\Programs\\Companion\\Companion.exe",
-                ],
-                ["Companion"],
-            ),
-            "Elgato.StreamDeck": (
-                [
-                    "${env:ProgramFiles}\\Elgato\\StreamDeck\\StreamDeck.exe",
-                    "${env:ProgramFiles(x86)}\\Elgato\\StreamDeck\\StreamDeck.exe",
-                    "${env:LocalAppData}\\Elgato\\StreamDeck\\StreamDeck.exe",
-                ],
-                ["StreamDeck"],
-            ),
-        }
-        fallback = fallback_checks.get(winget_id)
-        if fallback:
-            fallback_paths, fallback_commands = fallback
-            fallback_command = (
-                "$paths=@(" + ",".join(f"'{path}'" for path in fallback_paths) + "); "
-                "$commands=@(" + ",".join(f"'{name}'" for name in fallback_commands) + "); "
-                "$pathHit = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; "
-                "$commandHit = $commands | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1; "
-                "if ($pathHit) { $pathHit } elseif ($commandHit) { $commandHit }"
-            )
-            fallback_rc, fallback_output = run_command_with_options(
-                ["powershell", "-NoProfile", "-Command", fallback_command],
-                timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-                cancel_requested=cancel_requested,
-            )
-            fallback_hit = compact_single_line(fallback_output)
-            if fallback_rc == 0 and fallback_hit:
-                return True, f"Installed (fallback: {fallback_hit})"
+        fallback_result = _fallback_probe()
+        if fallback_result:
+            return fallback_result
         return None, "Unable to query"
 
     lowered = output.lower()
     if winget_id.lower() in lowered:
         return True, "Installed"
     if "no installed package found" in lowered:
+        fallback_result = _fallback_probe()
+        if fallback_result:
+            return fallback_result
         return False, "Not installed"
+
+    fallback_result = _fallback_probe()
+    if fallback_result:
+        return fallback_result
     return False, "Not detected"
 
 
