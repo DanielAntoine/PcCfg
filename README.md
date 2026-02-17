@@ -25,6 +25,15 @@ From the project folder:
 python dxm_pc_setup_gui.py
 ```
 
+## Build EXE with icon (Windows)
+
+Use PyInstaller with the included `app.ico` file:
+
+```powershell
+pyinstaller --noconfirm --onefile --windowed --name PcCfg --icon app.ico --add-data "style;style" --add-data "profiles;profiles" dxm_pc_setup_gui.py
+```
+
+
 On Windows, the app relaunches itself with Administrator privileges when needed.
 
 ## Windows non-interactive install commands (recommended)
