@@ -146,7 +146,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("enable_rdp", "Enable Remote Desktop (service + firewall + NLA)"),
             ChecklistItem("record_scid", "Record ScreenConnect ID"),
             ChecklistItem("vault_passwords", "Passwords and keys stored in Vault"),
-            ChecklistItem("test_remote", "Test remote connection"),
+            ChecklistItem("test_remote", "Internet reachable"),
         ),
     ),
     ChecklistSection(
