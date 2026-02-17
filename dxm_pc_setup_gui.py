@@ -94,8 +94,9 @@ SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
     ("software_companion", "Bitfocus Companion", "Bitfocus.Companion"),
     ("software_stream_deck", "Elgato Stream Deck", "Elgato.StreamDeck"),
 )
-SOFTWARE_DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
-SOFTWARE_DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
+DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
+DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
+DEFAULT_NA_ITEM_IDS.add(INVENTORY_ID_FIELD_ID)
 COMPUTER_ROLE_FIELD_CHOICES = ("", *COMPUTER_ROLE_OPTIONS)
 
 COMMAND_CANCEL_EXIT_CODE = -9
@@ -1449,7 +1450,7 @@ class MainWindow(QtWidgets.QWidget):
         self.resize(920, 700)
 
         self.select_all_checkbox = QtWidgets.QCheckBox("Select all APPLY options")
-        self.select_all_checkbox.setChecked(True)
+        self.select_all_checkbox.setChecked(False)
 
         self.inspect_button = QtWidgets.QPushButton("Inspect")
         self.run_button = QtWidgets.QPushButton("Run")
@@ -1477,7 +1478,7 @@ class MainWindow(QtWidgets.QWidget):
         self.tasks_layout = QtWidgets.QVBoxLayout(self.tasks_group)
         for task in self.apply_tasks:
             cb = QtWidgets.QCheckBox(task.label)
-            cb.setChecked(True)
+            cb.setChecked(False)
             self.task_checkboxes[task.key] = cb
             if task.key == "rename_pc":
                 rename_row = QtWidgets.QHBoxLayout()
@@ -1640,7 +1641,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setColumnWidth(1, 110)
         self._ensure_profile_storage()
         self._refresh_profile_selector()
-        self._apply_default_software_states()
+        self._apply_default_checklist_states()
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(820)
@@ -1798,6 +1799,7 @@ class MainWindow(QtWidgets.QWidget):
         if field.field_type == "numbering":
             value_input = QtWidgets.QComboBox()
             value_input.addItems([f"{number:02d}" for number in range(1, 100)])
+            value_input.setCurrentIndex(-1)
             value_input.currentTextChanged.connect(
                 lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
             )
@@ -2088,8 +2090,8 @@ class MainWindow(QtWidgets.QWidget):
         self._save_installation_checklist_state()
         self._append(f"[INFO] Profile reloaded: {profile_path.name}")
 
-    def _apply_default_software_states(self) -> None:
-        for task_id in SOFTWARE_DEFAULT_NA_ITEM_IDS:
+    def _apply_default_checklist_states(self) -> None:
+        for task_id in DEFAULT_NA_ITEM_IDS:
             item = self.checklist_item_by_id.get(task_id)
             if item is None:
                 continue
@@ -2110,7 +2112,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
             for field_id, widget in self.checklist_info_inputs.items():
                 self._set_checklist_info_value(field_id, widget, "")
-            self._apply_default_software_states()
+            self._apply_default_checklist_states()
         finally:
             self._is_loading_checklist_state = False
 
@@ -2254,10 +2256,13 @@ class MainWindow(QtWidgets.QWidget):
                 self._add_combo_value_if_missing(widget, value)
                 widget.setCurrentText(value)
                 return
+            if not value.strip():
+                widget.setCurrentIndex(-1)
+                return
             normalized_value = self._normalize_numbering_value(value)
 
             index = widget.findText(normalized_value)
-            widget.setCurrentIndex(index if index >= 0 else 0)
+            widget.setCurrentIndex(index if index >= 0 else -1)
             return
         if isinstance(widget, QtWidgets.QDateEdit):
             parsed_date = QtCore.QDate.fromString(value, "yyyy-MM-dd")
