@@ -127,7 +127,7 @@ Install-Package <name> -Force -Confirm:$false
   - Stop after first pass and prompt user when another pass/restart is needed.
   - Keep implementation style consistent with the rest of the app.
   - Mark as `PASS` when no critical updates remain.
-- [ ] Allow Run when hostname is missing, but block only "Rename computer" until hostname format requirements are met.
+- [x] Allow Run when hostname is missing, but block only "Rename computer" until hostname format requirements are met.
 - [ ] Add Inspect output (informational only) to log console and report output:
   - CPU (short value)
   - Motherboard (short value)
@@ -137,11 +137,11 @@ Install-Package <name> -Force -Confirm:$false
 - [ ] After Run, show "restart may be needed" popup only for specific actions that can require reboot:
   - Dialog buttons: `Restart now` and `Restart later`.
   - Include which tasks triggered reboot requirement.
-- [ ] Add Remote Desktop setup to Apply options + checklist as one item:
+- [x] Add Remote Desktop setup to Apply options + checklist as one item:
   - Enable RDP service.
   - Allow firewall rule.
   - Enable NLA.
-- [ ] Add `https://www.nvidia.com/Download/index.aspx` to Manual Install list only.
-- [ ] Open text report automatically after save; show dialog if opening fails.
-- [ ] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
-- [ ]add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck
+- [x] Add `https://www.nvidia.com/Download/index.aspx` to Manual Install list only.
+- [x] Open text report automatically after save; show dialog if opening fails.
+- [x] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
+- [x] add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck

@@ -67,6 +67,16 @@ APPLY_TASK_DEFINITIONS: tuple[ApplyTaskDefinition, ...] = (
         ),
     ),
     ApplyTaskDefinition(
+        "remote_desktop_setup",
+        "Enable Remote Desktop (service + firewall + NLA)",
+        ((
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Set-ItemProperty -Path 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0; Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'; Set-ItemProperty -Path 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -Value 1; Set-Service -Name TermService -StartupType Automatic; Start-Service -Name TermService",
+        ),),
+    ),
+    ApplyTaskDefinition(
         "windows_update_auto",
         "Automate Windows Update scan/download/install",
         ((

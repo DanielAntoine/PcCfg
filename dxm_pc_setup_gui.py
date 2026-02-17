@@ -54,6 +54,36 @@ INVENTORY_ID_FIELD_ID = "inventory_id"
 DATE_FIELD_ID = "date"
 FILE_NAME_FIELD_ID = "file_name"
 
+SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
+    ("software_google_chrome", "Google Chrome", "Google.Chrome"),
+    ("software_shotcut", "Shotcut", "Meltytech.Shotcut"),
+    ("software_kdenlive", "Kdenlive", "KDE.Kdenlive"),
+    ("software_handbrake", "HandBrake", "HandBrake.HandBrake"),
+    ("software_avidemux", "Avidemux", "Avidemux.Avidemux"),
+    ("software_obs_studio", "OBS Studio", "OBSProject.OBSStudio"),
+    ("software_sharex", "ShareX", "ShareX.ShareX"),
+    ("software_audacity", "Audacity", "Audacity.Audacity"),
+    ("software_reaper", "REAPER", "Cockos.REAPER"),
+    ("software_vlc_media_player", "VLC media player", "VideoLAN.VLC"),
+    ("software_ffmpeg", "FFmpeg", "Gyan.FFmpeg"),
+    ("software_mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI"),
+    ("software_mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix"),
+    ("software_blender", "Blender", "BlenderFoundation.Blender"),
+    ("software_natron", "Natron", "Natron.Natron"),
+    ("software_notepadpp", "Notepad++", "Notepad++.Notepad++"),
+    ("software_7_zip", "7-Zip", "7zip.7zip"),
+    ("software_everything", "Everything", "voidtools.Everything"),
+    ("software_crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo"),
+    ("software_hwinfo", "HWInfo", "REALiX.HWiNFO"),
+    ("software_anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk"),
+    ("software_teamviewer", "TeamViewer", "TeamViewer.TeamViewer"),
+    ("software_parsec", "Parsec", "Parsec.Parsec"),
+    ("software_companion", "Bitfocus Companion", "Bitfocus.Companion"),
+    ("software_stream_deck", "Elgato Stream Deck", "Elgato.StreamDeck"),
+)
+SOFTWARE_DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
+SOFTWARE_DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
+
 COMMAND_CANCEL_EXIT_CODE = -9
 COMMAND_TIMEOUT_EXIT_CODE = -124
 DEFAULT_INSPECT_TIMEOUT_SEC = 30
@@ -435,6 +465,73 @@ def detect_ssh_readiness(cancel_requested: Callable[[], bool] | None = None) -> 
 
 
 
+def detect_remote_desktop_readiness(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Validate Remote Desktop service state, firewall rules, and NLA."""
+    command = (
+        "$svc = Get-Service -Name TermService -ErrorAction SilentlyContinue; "
+        "$fw = Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Enabled -eq 'True' } | Select-Object -First 1; "
+        "$nla = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -ErrorAction SilentlyContinue; "
+        "[PSCustomObject]@{Running=($svc -and $svc.Status -eq 'Running'); Firewall=[bool]$fw; NLA=($nla.UserAuthentication -eq 1)} | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    rows = parse_json_payload(output)
+    if not rows:
+        return None, "No RDP data"
+    row = rows[0]
+    running = bool(row.get("Running"))
+    firewall_ok = bool(row.get("Firewall"))
+    nla_ok = bool(row.get("NLA"))
+    ok = running and firewall_ok and nla_ok
+    return ok, f"Running={'OK' if running else 'FAIL'}, Firewall={'OK' if firewall_ok else 'FAIL'}, NLA={'OK' if nla_ok else 'FAIL'}"
+
+
+def detect_software_installation(winget_id: str, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Check if software is installed using winget list."""
+    rc, output = run_command_with_options(
+        ["winget", "list", "--id", winget_id, "-e", "--accept-source-agreements"],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    lowered = output.lower()
+    if winget_id.lower() in lowered:
+        return True, "Installed"
+    if "no installed package found" in lowered:
+        return False, "Not installed"
+    return False, "Not detected"
+
+
+def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Check if ScreenConnect is installed from uninstall registry keys."""
+    command = (
+        "$roots=@('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); "
+        "$found=Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'ScreenConnect|ConnectWise Control' } | Select-Object -First 1 -ExpandProperty DisplayName; "
+        "if ($found) { $found }"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    value = compact_single_line(output)
+    if value:
+        return True, value
+    return False, "Not installed"
+
+
 def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     """Parse JSON produced by PowerShell's ConvertTo-Json output."""
     text = raw_output.strip()
@@ -804,6 +901,7 @@ class SetupWorker(QtCore.QObject):
             "Test remote connection": "RUNNING",
             "Ensure all disks are visible": "RUNNING",
             "Validate SSH (installed + running + listening:22)": "RUNNING",
+            "Enable Remote Desktop (service + firewall + NLA)": "RUNNING",
         }
         for task_label, status in inspect_checks.items():
             self.checklist_status.emit(task_label, status, False, "Inspect in progress")
@@ -938,6 +1036,7 @@ class SetupWorker(QtCore.QObject):
         internet_ok, internet_detail = detect_internet_reachability(self._cancelled)
         disk_ok, disk_detail = detect_unused_disks(self._cancelled)
         ssh_ok, ssh_detail = detect_ssh_readiness(self._cancelled)
+        rdp_ok, rdp_detail = detect_remote_desktop_readiness(self._cancelled)
 
         if wifi_adapter_ok is None:
             self.log_line.emit(format_status_line("Wi-Fi adapter", wifi_adapter_detail, False))
@@ -994,7 +1093,43 @@ class SetupWorker(QtCore.QObject):
                 ssh_detail,
             )
 
+        if rdp_ok is None:
+            self.log_line.emit(format_status_line("Remote Desktop", rdp_detail, False))
+            self.checklist_status.emit("Enable Remote Desktop (service + firewall + NLA)", "PENDING", False, rdp_detail)
+        else:
+            self.log_line.emit(format_status_line("Remote Desktop", rdp_detail, rdp_ok))
+            self.checklist_status.emit(
+                "Enable Remote Desktop (service + firewall + NLA)",
+                "PASS" if rdp_ok else "FAIL",
+                rdp_ok,
+                rdp_detail,
+            )
+
         self.log_line.emit("")
+        self.step_started.emit("Software")
+        self.log_line.emit("Software")
+        self.log_line.emit("-" * 60)
+        for _task_id, label, winget_id in SOFTWARE_INSPECT_ITEMS:
+            installed_ok, installed_detail = detect_software_installation(winget_id, self._cancelled)
+            task_label = ITEM_LABELS_BY_ID.get(_task_id, label)
+            if installed_ok is None:
+                self.log_line.emit(format_status_line(label, installed_detail, False))
+                self.checklist_status.emit(task_label, "PENDING", False, installed_detail)
+            else:
+                self.log_line.emit(format_status_line(label, installed_detail, installed_ok))
+                self.checklist_status.emit(task_label, "PASS" if installed_ok else "FAIL", installed_ok, f"Inspect: {installed_detail}")
+
+        sc_ok, sc_detail = detect_screenconnect_installation(self._cancelled)
+        screenconnect_task = ITEM_LABELS_BY_ID.get("software_screenconnect", "ScreenConnect")
+        if sc_ok is None:
+            self.log_line.emit(format_status_line("ScreenConnect", sc_detail, False))
+            self.checklist_status.emit(screenconnect_task, "PENDING", False, sc_detail)
+        else:
+            self.log_line.emit(format_status_line("ScreenConnect", sc_detail, sc_ok))
+            self.checklist_status.emit(screenconnect_task, "PASS" if sc_ok else "FAIL", sc_ok, f"Inspect: {sc_detail}")
+
+        self.log_line.emit("")
+        self.step_finished.emit("Software", True)
         self.step_finished.emit("Connectivity", True)
         self.completed.emit(True, "done")
 
@@ -1021,6 +1156,7 @@ class SetupWorker(QtCore.QObject):
         apply_task_map = {
             "Automate Windows Update scan/download/install": "Run Windows Update until \"Up to date\"",
             "Install/enable OpenSSH Server + firewall": "Validate SSH (installed + running + listening:22)",
+            "Enable Remote Desktop (service + firewall + NLA)": "Enable Remote Desktop (service + firewall + NLA)",
         }
         for idx, step in enumerate(self._apply_steps, start=1):
             if self._cancelled():
@@ -1302,6 +1438,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.setColumnWidth(1, 110)
         self._ensure_profile_storage()
         self._refresh_profile_selector()
+        self._apply_default_software_states()
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(820)
@@ -1570,7 +1707,7 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 key = str(item.data(0, QtCore.Qt.UserRole) or item.text(0))
-                state = str(persisted_items.get(key, "UNCHECKED")).upper()
+                state = str(persisted_items.get(key, self.checklist_item_states.get(key, "UNCHECKED"))).upper()
                 if state not in {"CHECKED", "UNCHECKED", "NA"}:
                     state = "UNCHECKED"
                 self.checklist_item_states[key] = state
@@ -1643,7 +1780,7 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 key = str(item.data(0, QtCore.Qt.UserRole) or item.text(0))
-                state = str(persisted_items.get(key, "UNCHECKED")).upper()
+                state = str(persisted_items.get(key, self.checklist_item_states.get(key, "UNCHECKED"))).upper()
                 if state not in {"CHECKED", "UNCHECKED", "NA"}:
                     state = "UNCHECKED"
                 self.checklist_item_states[key] = state
@@ -1663,6 +1800,17 @@ class MainWindow(QtWidgets.QWidget):
         self._save_installation_checklist_state()
         self._append(f"[INFO] Profile reloaded: {profile_path.name}")
 
+    def _apply_default_software_states(self) -> None:
+        for task_id in SOFTWARE_DEFAULT_NA_ITEM_IDS:
+            item = self.checklist_item_by_id.get(task_id)
+            if item is None:
+                continue
+            state = "UNCHECKED" if task_id == "software_screenconnect" else "NA"
+            self.checklist_item_states[task_id] = state
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            if state == "NA":
+                self._set_checklist_item_status(task_id, "NA", "Not applicable")
+
     def _start_new_install(self) -> None:
         self._is_loading_checklist_state = True
         try:
@@ -1674,6 +1822,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
             for widget in self.checklist_info_inputs.values():
                 self._set_checklist_info_value(widget, "")
+            self._apply_default_software_states()
         finally:
             self._is_loading_checklist_state = False
 
@@ -1725,6 +1874,7 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         self._append(f"[INFO] Report saved to: {selected_path}")
+        self._open_text_file(selected_path, "Save Report")
 
     def _export_installation_report(self) -> None:
         total = len(self.installation_checklist_items)
@@ -1780,6 +1930,7 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         self._append(f"[INFO] Installation report exported to: {selected_path}")
+        self._open_text_file(selected_path, "Export installation report")
 
     def _read_checklist_info_value(self, widget: QtWidgets.QWidget) -> str:
         if isinstance(widget, QtWidgets.QLineEdit):
@@ -1831,6 +1982,11 @@ class MainWindow(QtWidgets.QWidget):
         opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
         if not opened:
             self._append(f"[WARN] Unable to open {app_label} website: {url}")
+
+    def _open_text_file(self, file_path: str, dialog_title: str) -> None:
+        opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(file_path))
+        if not opened:
+            QtWidgets.QMessageBox.warning(self, dialog_title, f"Report saved but could not open file:\n{file_path}")
 
     def _append(self, text: str = "") -> None:
         self.output.appendPlainText(text)
@@ -1938,11 +2094,11 @@ class MainWindow(QtWidgets.QWidget):
         return self.rename_input.text().strip() == expected
 
     def _run_apply(self) -> None:
-        if not self._hostname_requirements_met():
+        if self.task_checkboxes['rename_pc'].isChecked() and not self._hostname_requirements_met():
             QtWidgets.QMessageBox.warning(
                 self,
                 "Missing hostname fields",
-                "Apply is blocked until Client name, Computer role (2+ chars), and Numbering00 are set. Hostname is generated automatically and cannot be overridden.",
+                "Rename computer is blocked until Client name, Computer role (2+ chars), and Numbering00 are set. Disable Rename computer to run the other tasks.",
             )
             return
 
