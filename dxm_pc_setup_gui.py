@@ -1951,19 +1951,45 @@ class MainWindow(QtWidgets.QWidget):
 
     def _save_profile(self) -> None:
         suggested_name = to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
-        entered_name, ok = QtWidgets.QInputDialog.getText(
-            self,
-            "Save profile",
-            "Profile name:",
-            text=suggested_name,
-        )
-        if not ok:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Save profile")
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        name_label = QtWidgets.QLabel("Profile name:")
+        name_input = QtWidgets.QLineEdit(suggested_name)
+        layout.addWidget(name_label)
+        layout.addWidget(name_input)
+
+        button_box = QtWidgets.QDialogButtonBox()
+        save_button = button_box.addButton("Save", QtWidgets.QDialogButtonBox.AcceptRole)
+        default_button = button_box.addButton("Save as default", QtWidgets.QDialogButtonBox.ActionRole)
+        cancel_button = button_box.addButton(QtWidgets.QDialogButtonBox.Cancel)
+        layout.addWidget(button_box)
+
+        save_as_default = False
+
+        def _accept() -> None:
+            dialog.accept()
+
+        def _save_default() -> None:
+            nonlocal save_as_default
+            save_as_default = True
+            dialog.accept()
+
+        save_button.clicked.connect(_accept)
+        default_button.clicked.connect(_save_default)
+        cancel_button.clicked.connect(dialog.reject)
+
+        if dialog.exec() != QtWidgets.QDialog.Accepted:
             self._append("[INFO] Save profile cancelled.")
             return
 
-        input_name = to_pascal_case_alnum(entered_name) or suggested_name
-        profile_name = f"{input_name}-{datetime.now().strftime('%y%m%d')}.json"
-        profile_path = CHECKLIST_PROFILE_DIR / profile_name
+        input_name = to_pascal_case_alnum(name_input.text()) or suggested_name
+        if save_as_default:
+            profile_path = DEFAULT_PROFILE_FILE
+        else:
+            profile_name = f"{input_name}-{datetime.now().strftime('%y%m%d')}.json"
+            profile_path = CHECKLIST_PROFILE_DIR / profile_name
 
         checklist_state = {
             str(item.data(0, QtCore.Qt.UserRole) or item.text(0)): self.checklist_item_states.get(
@@ -1978,7 +2004,10 @@ class MainWindow(QtWidgets.QWidget):
         idx = self.profile_selector.findData(str(profile_path))
         if idx >= 0:
             self.profile_selector.setCurrentIndex(idx)
-        self._append(f"[INFO] Profile saved: {profile_path.name}. Use Reload profile to apply saved profile values.")
+        if save_as_default:
+            self._append("[INFO] Default profile saved. Use Reload profile to apply saved profile values.")
+        else:
+            self._append(f"[INFO] Profile saved: {profile_path.name}. Use Reload profile to apply saved profile values.")
 
     def _reload_selected_profile(self) -> None:
         profile_path = self._selected_profile_path()
