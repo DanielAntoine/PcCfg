@@ -142,3 +142,6 @@ Install-Package <name> -Force -Confirm:$false
 
 ## TODO
 - [x] "installed card" can select multiple from a dropdown, now includes 12 preset options and supports manual multi-entry
+- [ ] Inventory ID set as net applicable by default
+- [ ] Numbering00 set to none by default
+- [ ] start whit no "Apply option" check by default
