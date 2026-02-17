@@ -13,13 +13,11 @@ import json
 import os
 import platform
 import re
-import shlex
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Sequence, overload
+from typing import Callable, Sequence
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 
@@ -34,7 +32,7 @@ STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
 MANUAL_STATUS_CYCLE = ("PENDING", "PASS", "FAIL", "NA")
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
-from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
+from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS, SOFTWARE_INSPECT_APPS, validate_install_app_catalog
 from pccfg.domain.checklist import (
     CHECKLIST_FIELDS,
     CHECKLIST_LOG_FILE,
@@ -52,6 +50,27 @@ from pccfg.domain.checklist import (
 )
 from pccfg.domain.models import ApplyTask, ExecutionStep, InstallApp, ManualInstallApp
 from pccfg.services.checklist_store import load_checklist_state, save_checklist_state
+from pccfg.domain.hostname import build_hostname_value, normalize_numbering_value, to_pascal_case_alnum
+from pccfg.services.checklist_sync import sync_inspect_status, sync_item_state_from_info_value
+from pccfg.services.command_runner import (
+    COMMAND_CANCEL_EXIT_CODE,
+    COMMAND_TIMEOUT_EXIT_CODE,
+    DEFAULT_APPLY_TIMEOUT_SEC,
+    DEFAULT_INSPECT_TIMEOUT_SEC,
+    DEFAULT_INSTALL_TIMEOUT_SEC,
+    format_command,
+    run_command_with_options,
+)
+from pccfg.services.system_probes import (
+    detect_internet_reachability,
+    detect_remote_desktop_readiness,
+    detect_screenconnect_installation,
+    detect_software_installation,
+    detect_ssh_readiness,
+    detect_unused_disks,
+    detect_wifi_adapter,
+    detect_wifi_connection,
+)
 
 CLIENT_NAME_FIELD_ID = "client_name"
 COMPUTER_ROLE_FIELD_ID = "computer_role"
@@ -71,43 +90,11 @@ CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
     "screenconnect_id": "record_scid",
 }
 
-SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
-    ("software_google_chrome", "Google Chrome", "Google.Chrome"),
-    ("software_shotcut", "Shotcut", "Meltytech.Shotcut"),
-    ("software_kdenlive", "Kdenlive", "KDE.Kdenlive"),
-    ("software_handbrake", "HandBrake", "HandBrake.HandBrake"),
-    ("software_avidemux", "Avidemux", "Avidemux.Avidemux"),
-    ("software_obs_studio", "OBS Studio", "OBSProject.OBSStudio"),
-    ("software_sharex", "ShareX", "ShareX.ShareX"),
-    ("software_audacity", "Audacity", "Audacity.Audacity"),
-    ("software_reaper", "REAPER", "Cockos.REAPER"),
-    ("software_vlc_media_player", "VLC media player", "VideoLAN.VLC"),
-    ("software_ffmpeg", "FFmpeg", "Gyan.FFmpeg"),
-    ("software_mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI"),
-    ("software_mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix"),
-    ("software_blender", "Blender", "BlenderFoundation.Blender"),
-    ("software_natron", "Natron", "Natron.Natron"),
-    ("software_notepadpp", "Notepad++", "Notepad++.Notepad++"),
-    ("software_7_zip", "7-Zip", "7zip.7zip"),
-    ("software_everything", "Everything", "voidtools.Everything"),
-    ("software_crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo"),
-    ("software_hwinfo", "HWInfo", "REALiX.HWiNFO"),
-    ("software_anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk"),
-    ("software_teamviewer", "TeamViewer", "TeamViewer.TeamViewer"),
-    ("software_parsec", "Parsec", "Parsec.Parsec"),
-    ("software_companion", "Bitfocus Companion", "Bitfocus.Companion"),
-    ("software_stream_deck", "Elgato Stream Deck", "Elgato.StreamDeck"),
-)
-DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
+DEFAULT_NA_ITEM_IDS = {app.inspect_item_id for app in SOFTWARE_INSPECT_APPS if app.inspect_item_id}
 DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
 DEFAULT_NA_ITEM_IDS.add(INVENTORY_ID_FIELD_ID)
 COMPUTER_ROLE_FIELD_CHOICES = ("", *COMPUTER_ROLE_OPTIONS)
 
-COMMAND_CANCEL_EXIT_CODE = -9
-COMMAND_TIMEOUT_EXIT_CODE = -124
-DEFAULT_INSPECT_TIMEOUT_SEC = 30
-DEFAULT_APPLY_TIMEOUT_SEC = 120
-DEFAULT_INSTALL_TIMEOUT_SEC = 1200
 INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
     "Blackmagic DeckLink",
     "Blackmagic UltraStudio",
@@ -122,71 +109,6 @@ INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
     "SDI I/O Card",
     "Other",
 )
-
-
-@overload
-def run_command(command: str) -> tuple[int, str]: ...
-
-
-@overload
-def run_command(command: list[str]) -> tuple[int, str]: ...
-
-
-def run_command(command: str | list[str]) -> tuple[int, str]:
-    """Run command and return (return_code, output)."""
-    return run_command_with_options(command)
-
-
-def run_command_with_options(
-    command: str | list[str],
-    *,
-    timeout_sec: float | None = None,
-    cancel_requested: Callable[[], bool] | None = None,
-    poll_interval_sec: float = 0.2,
-) -> tuple[int, str]:
-    """Run command with optional timeout/cancellation support."""
-    args = command if isinstance(command, list) else shlex.split(command)
-    proc = subprocess.Popen(
-        args,
-        shell=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
-    )
-
-    deadline = None if timeout_sec is None else datetime.now().timestamp() + timeout_sec
-    while True:
-        if cancel_requested and cancel_requested():
-            proc.terminate()
-            try:
-                stdout, _ = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, _ = proc.communicate()
-            return COMMAND_CANCEL_EXIT_CODE, stdout.strip()
-
-        if deadline is not None and datetime.now().timestamp() >= deadline:
-            proc.terminate()
-            try:
-                stdout, _ = proc.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, _ = proc.communicate()
-            return COMMAND_TIMEOUT_EXIT_CODE, stdout.strip()
-
-        rc = proc.poll()
-        if rc is not None:
-            stdout, _ = proc.communicate()
-            return rc, stdout.strip()
-
-        QtCore.QThread.msleep(max(1, int(poll_interval_sec * 1000)))
-
-
-def format_command(args: list[str]) -> str:
-    """Create a readable command line string for logging."""
-    return subprocess.list2cmdline(args)
 
 
 def is_windows() -> bool:
@@ -502,273 +424,6 @@ class DragCheckBoxEventFilter(QtCore.QObject):
                 return widget
             widget = widget.parentWidget()
         return None
-
-
-def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Detect whether a Wi-Fi adapter exists."""
-    command = (
-        "$a = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | "
-        "Where-Object { $_.InterfaceDescription -match 'Wi-Fi|Wireless|WLAN' -or $_.Name -match 'Wi-Fi|Wireless|WLAN' }; "
-        "if ($a) { $a | Select-Object -ExpandProperty Name | ConvertTo-Json -Compress }"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    adapters: list[str] = []
-    raw = output.strip()
-    if raw:
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            payload = raw
-
-        if isinstance(payload, str):
-            adapters = [payload.strip()] if payload.strip() else []
-        elif isinstance(payload, list):
-            adapters = [str(item).strip() for item in payload if str(item).strip()]
-    if adapters:
-        return True, ", ".join(adapters)
-    return False, "No Wi-Fi adapter found"
-
-
-def detect_wifi_connection(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Detect Wi-Fi connection state and include SSID/signal when available."""
-    rc, output = run_command_with_options(
-        ["netsh", "wlan", "show", "interfaces"],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    state_match = re.search(r"^\s*State\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
-    ssid_match = re.search(r"^\s*SSID\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
-    signal_match = re.search(r"^\s*Signal\s*:\s*(.+)$", output, flags=re.IGNORECASE | re.MULTILINE)
-
-    state_value = state_match.group(1).strip() if state_match else "Unknown"
-    connected = state_value.lower() == "connected"
-    if connected:
-        ssid = ssid_match.group(1).strip() if ssid_match else "Unknown"
-        signal = signal_match.group(1).strip() if signal_match else "Unknown"
-        return True, f"Connected ({ssid}, {signal})"
-    return False, f"{state_value}"
-
-
-def detect_internet_reachability(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Detect internet reachability via DNS and ICMP checks."""
-    dns_cmd = "Resolve-DnsName -Name microsoft.com -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty NameHost"
-    ping_cmd = "Test-Connection -ComputerName 1.1.1.1 -Count 1 -Quiet"
-    dns_rc, dns_out = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", dns_cmd],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    ping_rc, ping_out = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", ping_cmd],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-
-    if dns_rc != 0 and ping_rc != 0:
-        return None, "Unable to query"
-
-    dns_ok = bool(compact_single_line(dns_out))
-    ping_ok = compact_single_line(ping_out).lower() == "true"
-    reachable = dns_ok or ping_ok
-    detail = f"DNS={'OK' if dns_ok else 'FAIL'}, Ping={'OK' if ping_ok else 'FAIL'}"
-    return reachable, detail
-
-
-def detect_unused_disks(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Detect disks with no meaningful mounted volume usage."""
-    command = (
-        "$rows = Get-Disk -ErrorAction SilentlyContinue | ForEach-Object { "
-        "$disk = $_; "
-        "$parts = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue; "
-        "$vols = @(); if ($parts) { $vols = $parts | Get-Volume -ErrorAction SilentlyContinue }; "
-        "$used = $false; "
-        "if ($vols) { $used = @($vols | Where-Object { $_.DriveLetter -or ($_.Size -gt 0 -and $_.FileSystemType) }).Count -gt 0 }; "
-        "[PSCustomObject]@{Number=$disk.Number;FriendlyName=$disk.FriendlyName;Used=$used} "
-        "}; $rows | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    rows = parse_json_payload(output)
-    if not rows:
-        return None, "No disk data"
-
-    unused = [f"Disk {row.get('Number')} ({row.get('FriendlyName', 'Unknown')})" for row in rows if not bool(row.get('Used'))]
-    if unused:
-        return True, f"Unused: {', '.join(unused)}"
-    return True, "No unused disks detected"
-
-
-def detect_ssh_readiness(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Validate OpenSSH Server install, service state, and port 22 listening."""
-    command = (
-        "$cap = Get-WindowsCapability -Online -Name OpenSSH.Server* -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty State; "
-        "$svc = Get-Service -Name sshd -ErrorAction SilentlyContinue; "
-        "$tcp = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; "
-        "[PSCustomObject]@{Installed=($cap -eq 'Installed');Running=($svc -and $svc.Status -eq 'Running');Listening=[bool]$tcp} | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    rows = parse_json_payload(output)
-    if not rows:
-        return None, "No SSH data"
-    row = rows[0]
-    installed = bool(row.get("Installed"))
-    running = bool(row.get("Running"))
-    listening = bool(row.get("Listening"))
-    ok = installed and running and listening
-    return ok, f"Installed={'OK' if installed else 'FAIL'}, Running={'OK' if running else 'FAIL'}, Port22={'OK' if listening else 'FAIL'}"
-
-
-
-def detect_remote_desktop_readiness(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Validate Remote Desktop service state, firewall rules, and NLA."""
-    command = (
-        "$svc = Get-Service -Name TermService -ErrorAction SilentlyContinue; "
-        "$fw = Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue | "
-        "Where-Object { $_.Enabled -eq 'True' } | Select-Object -First 1; "
-        "$nla = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp' -Name UserAuthentication -ErrorAction SilentlyContinue; "
-        "[PSCustomObject]@{Running=($svc -and $svc.Status -eq 'Running'); Firewall=[bool]$fw; NLA=($nla.UserAuthentication -eq 1)} | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    rows = parse_json_payload(output)
-    if not rows:
-        return None, "No RDP data"
-    row = rows[0]
-    running = bool(row.get("Running"))
-    firewall_ok = bool(row.get("Firewall"))
-    nla_ok = bool(row.get("NLA"))
-    ok = running and firewall_ok and nla_ok
-    return ok, f"Running={'OK' if running else 'FAIL'}, Firewall={'OK' if firewall_ok else 'FAIL'}, NLA={'OK' if nla_ok else 'FAIL'}"
-
-
-def detect_software_installation(winget_id: str, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Check if software is installed using winget list."""
-    fallback_checks: dict[str, tuple[list[str], list[str]]] = {
-        "Google.Chrome": (
-            [
-                "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
-                "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
-                "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
-            ],
-            ["chrome"],
-        ),
-        "Bitfocus.Companion": (
-            [
-                "${env:ProgramFiles}\\Companion\\Companion.exe",
-                "${env:ProgramFiles(x86)}\\Companion\\Companion.exe",
-                "${env:LocalAppData}\\Programs\\Companion\\Companion.exe",
-            ],
-            ["Companion"],
-        ),
-        "Elgato.StreamDeck": (
-            [
-                "${env:ProgramFiles}\\Elgato\\StreamDeck\\StreamDeck.exe",
-                "${env:ProgramFiles(x86)}\\Elgato\\StreamDeck\\StreamDeck.exe",
-                "${env:LocalAppData}\\Elgato\\StreamDeck\\StreamDeck.exe",
-            ],
-            ["StreamDeck"],
-        ),
-    }
-
-    def _fallback_probe() -> tuple[bool | None, str] | None:
-        fallback = fallback_checks.get(winget_id)
-        if not fallback:
-            return None
-
-        fallback_paths, fallback_commands = fallback
-        quoted_paths = ",".join(json.dumps(path) for path in fallback_paths)
-        quoted_commands = ",".join(json.dumps(name) for name in fallback_commands)
-        fallback_command = (
-            "$paths=@(" + quoted_paths + "); "
-            "$commands=@(" + quoted_commands + "); "
-            "$pathHit = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; "
-            "$commandHit = $commands | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1; "
-            "if ($pathHit) { $pathHit } elseif ($commandHit) { $commandHit }"
-        )
-        fallback_rc, fallback_output = run_command_with_options(
-            ["powershell", "-NoProfile", "-Command", fallback_command],
-            timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-            cancel_requested=cancel_requested,
-        )
-        fallback_hit = compact_single_line(fallback_output)
-        if fallback_rc == 0 and fallback_hit:
-            return True, f"Installed (fallback: {fallback_hit})"
-        return None
-
-    rc, output = run_command_with_options(
-        ["winget", "list", "--id", winget_id, "-e", "--accept-source-agreements"],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        fallback_result = _fallback_probe()
-        if fallback_result:
-            return fallback_result
-        return None, "Unable to query"
-
-    lowered = output.lower()
-    if winget_id.lower() in lowered:
-        return True, "Installed"
-    if "no installed package found" in lowered:
-        fallback_result = _fallback_probe()
-        if fallback_result:
-            return fallback_result
-        return False, "Not installed"
-
-    fallback_result = _fallback_probe()
-    if fallback_result:
-        return fallback_result
-    return False, "Not detected"
-
-
-def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    """Check if ScreenConnect is installed from uninstall registry keys."""
-    command = (
-        "$roots=@('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); "
-        "$found=Get-ItemProperty -Path $roots -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match 'ScreenConnect|ConnectWise Control' } | Select-Object -First 1 -ExpandProperty DisplayName; "
-        "if ($found) { $found }"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    value = compact_single_line(output)
-    if value:
-        return True, value
-    return False, "Not installed"
 
 
 def _clean_short_hardware_value(value: str) -> str:
@@ -1447,14 +1102,14 @@ class SetupWorker(QtCore.QObject):
         self.step_started.emit("Software")
         self.log_line.emit("Software")
         self.log_line.emit("-" * 60)
-        for _task_id, label, winget_id in SOFTWARE_INSPECT_ITEMS:
-            installed_ok, installed_detail = detect_software_installation(winget_id, self._cancelled)
-            task_label = ITEM_LABELS_BY_ID.get(_task_id, label)
+        for app in SOFTWARE_INSPECT_APPS:
+            installed_ok, installed_detail = detect_software_installation(app.winget_id, self._cancelled)
+            task_label = ITEM_LABELS_BY_ID.get(app.inspect_item_id or "", app.label)
             if installed_ok is None:
-                self.log_line.emit(format_status_line(label, installed_detail, False))
+                self.log_line.emit(format_status_line(app.label, installed_detail, False))
                 self.checklist_status.emit(task_label, "PENDING", False, installed_detail)
             else:
-                self.log_line.emit(format_status_line(label, installed_detail, installed_ok))
+                self.log_line.emit(format_status_line(app.label, installed_detail, installed_ok))
                 self.checklist_status.emit(task_label, "PASS" if installed_ok else "FAIL", installed_ok, f"Inspect: {installed_detail}")
 
         sc_ok, sc_detail = detect_screenconnect_installation(self._cancelled)
@@ -2118,19 +1773,17 @@ class MainWindow(QtWidgets.QWidget):
             return
 
         item = self.checklist_item_by_id.get(task_id)
-        if item is None or self.checklist_item_states.get(task_id) == "NA":
+        if item is None:
             return
 
         value = self._get_checklist_field_value(field_id).strip()
-        if value:
-            self.checklist_item_states[task_id] = "CHECKED"
-            item.setCheckState(0, QtCore.Qt.Checked)
-            self._set_checklist_item_status(task_id, "PASS", "Filled from setup information")
+        next_state, status, detail = sync_item_state_from_info_value(self.checklist_item_states.get(task_id), value)
+        if next_state == "NA":
             return
 
-        self.checklist_item_states[task_id] = "UNCHECKED"
-        item.setCheckState(0, QtCore.Qt.Unchecked)
-        self._set_checklist_item_status(task_id, "PENDING", "Waiting for setup information")
+        self.checklist_item_states[task_id] = next_state
+        item.setCheckState(0, QtCore.Qt.Checked if next_state == "CHECKED" else QtCore.Qt.Unchecked)
+        self._set_checklist_item_status(task_id, status, detail)
 
     def _apply_checklist_autofill(self) -> None:
         hostname_text = self._build_hostname_value()
@@ -2162,19 +1815,15 @@ class MainWindow(QtWidgets.QWidget):
         if item is None:
             return
 
-        state = self.checklist_item_states.get(task_id)
-        is_software_item = task_id.startswith("software_")
-        if state == "NA":
-            if not (is_software_item and should_check and status == "PASS"):
-                return
-            self.checklist_item_states[task_id] = "UNCHECKED"
+        next_state, set_checked = sync_inspect_status(self.checklist_item_states.get(task_id), task_id, status, should_check)
+        if next_state is None:
+            return
 
+        self.checklist_item_states[task_id] = next_state
         self._set_checklist_item_status(task_id, status, detail)
-        if should_check and status == "PASS":
-            self.checklist_item_states[task_id] = "CHECKED"
+        if set_checked:
             item.setCheckState(0, QtCore.Qt.Checked)
         elif status in {"FAIL", "PENDING"} and item.checkState(0) != QtCore.Qt.Checked:
-            self.checklist_item_states[task_id] = "UNCHECKED"
             item.setCheckState(0, QtCore.Qt.Unchecked)
 
     def _autofill_line_edit(self, field_label: str, proposed_value: str) -> None:
@@ -2196,33 +1845,11 @@ class MainWindow(QtWidgets.QWidget):
         self._last_autofill_values[field_label] = proposed_value
 
     def _build_hostname_value(self) -> str:
-        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
-        client_hostname = (client_name[:6]).ljust(6, "X")
-        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
-        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
-            return ""
-
-        return f"{client_hostname}-{role_value[:4]}-{numbering_value}"
-
-
-    @staticmethod
-    def _to_alnum(value: str) -> str:
-        return "".join(char for char in value if char.isalnum())
-
-    @classmethod
-    def _normalize_numbering_value(cls, value: str) -> str:
-        alnum_value = cls._to_alnum(value)
-        if alnum_value.isdigit():
-            numeric_value = int(alnum_value)
-            if 1 <= numeric_value <= 99:
-                return f"{numeric_value:02d}"
-        return alnum_value
-
-    @classmethod
-    def _to_pascal_case_alnum(cls, value: str) -> str:
-        words = re.split(r"[^A-Za-z0-9]+", value)
-        return "".join(cls._to_alnum(word).capitalize() for word in words if word)
+        return build_hostname_value(
+            self._get_checklist_info_text(CLIENT_NAME_FIELD_ID),
+            self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID),
+            self._get_checklist_info_text(NUMBERING_FIELD_ID),
+        )
 
     def _build_file_name_value(self) -> str:
         date_widget = self.checklist_info_inputs.get(DATE_FIELD_ID)
@@ -2322,7 +1949,7 @@ class MainWindow(QtWidgets.QWidget):
         return DEFAULT_PROFILE_FILE
 
     def _save_profile(self) -> None:
-        suggested_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
+        suggested_name = to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
         entered_name, ok = QtWidgets.QInputDialog.getText(
             self,
             "Save profile",
@@ -2333,7 +1960,7 @@ class MainWindow(QtWidgets.QWidget):
             self._append("[INFO] Save profile cancelled.")
             return
 
-        input_name = self._to_pascal_case_alnum(entered_name) or suggested_name
+        input_name = to_pascal_case_alnum(entered_name) or suggested_name
         profile_name = f"{input_name}-{datetime.now().strftime('%y%m%d')}.json"
         profile_path = CHECKLIST_PROFILE_DIR / profile_name
 
@@ -2553,7 +2180,7 @@ class MainWindow(QtWidgets.QWidget):
             if not value.strip():
                 widget.setCurrentIndex(-1)
                 return
-            normalized_value = self._normalize_numbering_value(value)
+            normalized_value = normalize_numbering_value(value)
 
             index = widget.findText(normalized_value)
             widget.setCurrentIndex(index if index >= 0 else -1)
@@ -2732,13 +2359,12 @@ class MainWindow(QtWidgets.QWidget):
         return selected_steps, app_steps
 
     def _hostname_requirements_met(self) -> bool:
-        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
-        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
-        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
-            return False
-        expected = f"{client_name}-{role_value[:4]}-{numbering_value}"
-        return self.rename_input.text().strip() == expected
+        expected = build_hostname_value(
+            self._get_checklist_info_text(CLIENT_NAME_FIELD_ID),
+            self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID),
+            self._get_checklist_info_text(NUMBERING_FIELD_ID),
+        )
+        return bool(expected) and self.rename_input.text().strip() == expected
 
     def _run_apply(self) -> None:
         if self.task_checkboxes['rename_pc'].isChecked() and not self._hostname_requirements_met():
@@ -2796,6 +2422,7 @@ def main() -> int:
     if not icon.isNull():
         app.setWindowIcon(icon)
     app.setStyleSheet(load_stylesheet())
+    validate_install_app_catalog()
     window = MainWindow()
     window.show()
     return app.exec_()
