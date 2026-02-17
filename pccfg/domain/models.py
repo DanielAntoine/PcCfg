@@ -18,6 +18,8 @@ class InstallApp:
     winget_id: str
     category: str
     inspect_item_id: str | None = None
+    detect_display_names: tuple[str, ...] = ()
+    detect_publishers: tuple[str, ...] = ()
 
 
 @dataclass
