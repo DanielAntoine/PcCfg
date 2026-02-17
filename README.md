@@ -101,11 +101,31 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Detect whether Wi-Fi is connected during Inspect (connected/disconnected + SSID/signal when available), and update the matching checklist item automatically when detection passes.
 - [x] Detect internet reachability during Inspect (for example via DNS/ping test), and update the matching checklist item automatically when detection passes.
 - [x] For each Inspect detection result, sync checklist state so passing checks can auto-check their mapped checklist tasks while failed/unknown checks remain visible for manual follow-up.
-- [ ] Add a config section for client, where we can save the selection, maybe also grey out element in the checklist whit right clic if its not needed for a client or by default 
-- [ ] computer name and hostname need the 3 element always
-- [ ] add to app, turn on ssh and make sur it always run
-- [ ] add parsec download link.
+- [ ] Add a client profile config section:
+  - Save profile as `{InputName}.json`.
+  - Include a default profile.
+  - Support marking checklist items as `Not Applicable` (right-click), and treat them as skipped.
+  - Apply profile changes only after save + reload.
+- [ ] Enforce computer name/hostname format with all 3 required elements:
+  - `ClientName`, `Role`, and `numbering00`.
+  - Pattern remains `{ClientNamePascal}-{Role2LUpper}-{numbering00}`.
+  - Block **Apply** if any required element is missing.
+  - No manual override of generated name.
+- [ ] Add SSH setup in app:
+  - Install/enable OpenSSH Server only if missing.
+  - Set service startup type to `Automatic`.
+  - Ensure Windows Firewall SSH rule is enabled.
+  - Add Inspect validation for installed + running + listening (port 22).
+- [ ] Add Parsec support:
+  - Add Parsec download/install option.
+  - Use `winget` silent install if available.
+  - Do not add as an Inspect/Apply checklist status item.
 
 ## plan
-- [ ] can i automate to see if all disk have a letter assign.?
-- [ ] can running and veryfing windows update be automated?
+- [ ] Disk usage detection automation:
+  - Detect disks that are not used for anything (no meaningful mounted/active volume usage), rather than only checking drive-letter assignment.
+- [ ] Windows Update automation:
+  - Fully automate scan/download/install.
+  - Keep implementation style consistent with the rest of the app.
+  - Mark as `PASS` when update process completes successfully.
+  - If reboot is required, prompt the user from the app.
