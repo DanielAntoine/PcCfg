@@ -148,9 +148,9 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Remove "Validation: Device Manager = 0 unknown devices" from Setup information.
 - [x] Show Setup information inputs under each label (stacked vertically).
 - [x] Improve Google Chrome inspect detection with fallback checks when `winget list` cannot be queried.
-
-## TODO
 - [x] "installed card" can select multiple from a dropdown, now includes 12 preset options and supports manual multi-entry
 - [x] Inventory ID set as net applicable by default
 - [x] Numbering00 set to none by default
 - [x] start whit no "Apply option" check by default
+## TODO
+
