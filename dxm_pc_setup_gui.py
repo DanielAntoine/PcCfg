@@ -356,6 +356,56 @@ def query_password_required_status(cancel_requested: Callable[[], bool] | None =
     return None
 
 
+class DragCheckTreeWidget(QtWidgets.QTreeWidget):
+    """QTreeWidget that supports click-and-drag checkbox toggling for task rows."""
+
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._drag_check_active = False
+        self._drag_check_state = QtCore.Qt.Checked
+        self._drag_check_last_item: QtWidgets.QTreeWidgetItem | None = None
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            item = self.itemAt(event.pos())
+            if item is not None and self._is_task_item(item):
+                self._drag_check_active = True
+                self._drag_check_state = QtCore.Qt.Checked
+                self._drag_check_last_item = None
+                self._apply_drag_check(item)
+                event.accept()
+                return
+
+        self._drag_check_active = False
+        self._drag_check_last_item = None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
+        if self._drag_check_active and (event.buttons() & QtCore.Qt.LeftButton):
+            item = self.itemAt(event.pos())
+            if item is not None and item is not self._drag_check_last_item and self._is_task_item(item):
+                self._apply_drag_check(item)
+                event.accept()
+                return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        if event.button() == QtCore.Qt.LeftButton:
+            self._drag_check_active = False
+            self._drag_check_last_item = None
+        super().mouseReleaseEvent(event)
+
+    def _apply_drag_check(self, item: QtWidgets.QTreeWidgetItem) -> None:
+        item.setCheckState(0, self._drag_check_state)
+        self._drag_check_last_item = item
+
+    @staticmethod
+    def _is_task_item(item: QtWidgets.QTreeWidgetItem) -> bool:
+        task_id = item.data(0, QtCore.Qt.UserRole)
+        return isinstance(task_id, str) and bool(task_id)
+
+
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
     """Detect whether a Wi-Fi adapter exists."""
     command = (
@@ -1590,13 +1640,14 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_progress = QtWidgets.QLabel("0/0 completed")
         checklist_group_layout.addWidget(self.installation_checklist_progress)
 
-        self.installation_checklist_tree = QtWidgets.QTreeWidget()
+        self.installation_checklist_tree = DragCheckTreeWidget()
         self.installation_checklist_tree.setObjectName("installationChecklistTree")
         self.installation_checklist_tree.setColumnCount(2)
         self.installation_checklist_tree.setHeaderLabels(["Task", "Status"])
         self.installation_checklist_tree.setRootIsDecorated(False)
         self.installation_checklist_tree.setMouseTracking(True)
         self.installation_checklist_tree.setAlternatingRowColors(True)
+        self.installation_checklist_tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
         self.installation_checklist_tree.setUniformRowHeights(False)
         self.installation_checklist_tree.setIndentation(0)
         self.installation_checklist_tree.setTextElideMode(QtCore.Qt.ElideNone)
@@ -1775,28 +1826,62 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_status_bar.setText(f"{task_label} [{runtime_state[0]}] - {runtime_state[1]}")
 
     def _on_checklist_context_menu(self, pos: QtCore.QPoint) -> None:
-        item = self.installation_checklist_tree.itemAt(pos)
-        if item is None:
-            return
-        task_id = item.data(0, QtCore.Qt.UserRole)
-        if not isinstance(task_id, str) or not task_id:
+        selected_items = [
+            item
+            for item in self.installation_checklist_tree.selectedItems()
+            if isinstance(item.data(0, QtCore.Qt.UserRole), str) and item.data(0, QtCore.Qt.UserRole)
+        ]
+        if not selected_items:
+            item = self.installation_checklist_tree.itemAt(pos)
+            if item is None:
+                return
+            task_id = item.data(0, QtCore.Qt.UserRole)
+            if not isinstance(task_id, str) or not task_id:
+                return
+            selected_items = [item]
+
+        selected_task_ids = [str(item.data(0, QtCore.Qt.UserRole)) for item in selected_items]
+        if not selected_task_ids:
             return
 
         menu = QtWidgets.QMenu(self)
-        is_na = self.checklist_item_states.get(task_id) == "NA"
-        toggle_na = menu.addAction("Mark as Not Applicable" if not is_na else "Clear Not Applicable")
+        mark_checked = menu.addAction(
+            "Check selected task" if len(selected_task_ids) == 1 else f"Check {len(selected_task_ids)} selected tasks"
+        )
+        clear_checked = menu.addAction(
+            "Uncheck selected task" if len(selected_task_ids) == 1 else f"Uncheck {len(selected_task_ids)} selected tasks"
+        )
+        menu.addSeparator()
+        all_selected_na = all(self.checklist_item_states.get(task_id) == "NA" for task_id in selected_task_ids)
+        toggle_na = menu.addAction("Clear Not Applicable" if all_selected_na else "Mark as Not Applicable")
         chosen = menu.exec_(self.installation_checklist_tree.viewport().mapToGlobal(pos))
-        if chosen != toggle_na:
+        if chosen is None:
             return
 
-        if is_na:
-            self.checklist_item_states[task_id] = "UNCHECKED"
-            item.setCheckState(0, QtCore.Qt.Unchecked)
-            self._set_checklist_item_status(task_id, "PENDING", "Waiting")
+        if chosen == mark_checked:
+            for selected_item, task_id in zip(selected_items, selected_task_ids):
+                self.checklist_item_states[task_id] = "CHECKED"
+                selected_item.setCheckState(0, QtCore.Qt.Checked)
+                self._set_checklist_item_status(task_id, "PASS", "Checked")
+        elif chosen == clear_checked:
+            for selected_item, task_id in zip(selected_items, selected_task_ids):
+                if self.checklist_item_states.get(task_id) == "NA":
+                    continue
+                self.checklist_item_states[task_id] = "UNCHECKED"
+                selected_item.setCheckState(0, QtCore.Qt.Unchecked)
+                self._set_checklist_item_status(task_id, "PENDING", "Waiting")
+        elif chosen == toggle_na:
+            for selected_item, task_id in zip(selected_items, selected_task_ids):
+                if all_selected_na:
+                    self.checklist_item_states[task_id] = "UNCHECKED"
+                    selected_item.setCheckState(0, QtCore.Qt.Unchecked)
+                    self._set_checklist_item_status(task_id, "PENDING", "Waiting")
+                else:
+                    self.checklist_item_states[task_id] = "NA"
+                    selected_item.setCheckState(0, QtCore.Qt.Unchecked)
+                    self._set_checklist_item_status(task_id, "NA", "Not applicable")
         else:
-            self.checklist_item_states[task_id] = "NA"
-            item.setCheckState(0, QtCore.Qt.Unchecked)
-            self._set_checklist_item_status(task_id, "NA", "Not applicable")
+            return
 
         self._update_installation_checklist_progress()
         self._save_installation_checklist_state()
