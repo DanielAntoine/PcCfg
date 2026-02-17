@@ -42,7 +42,7 @@ CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("computer_role", "Computer role", "text"),
     ChecklistField("numbering", "Numbering00 (e.g., 01, 02, 03)", "numbering"),
 
-    ChecklistField("hostname", "Hostname/User: {ClientNamePascal}-{Role4LUpper}-{numbering00}", "text"),
+    ChecklistField("hostname", "Hostname/User: {ClientName6PadX}-{Role4LUpper}-{numbering00}", "text"),
     ChecklistField("inventory_id", "Inventory ID", "text"),
     ChecklistField("technician", "Technicien", "technician"),
     ChecklistField("date", "Date", "date"),
@@ -99,7 +99,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         "4) Windows Update + Drivers",
         (
 
-            ChecklistItem("rename_pc", "Rename the PC ({ClientNamePascal}-{Role4LUpper}-{numbering00})"),
+            ChecklistItem("rename_pc", "Rename the PC ({ClientName6PadX}-{Role4LUpper}-{numbering00})"),
             ChecklistItem("windows_update", 'Run Windows Update until "Up to date"'),
             ChecklistItem("install_chipset", "Install chipset drivers"),
             ChecklistItem("install_network", "Install network drivers (LAN/10GbE/Wi-Fi)"),
