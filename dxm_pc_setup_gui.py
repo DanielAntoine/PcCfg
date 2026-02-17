@@ -28,6 +28,15 @@ APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_WRAP_LINE_LEN = 64
 STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
+DEFAULT_TECHNICIAN_OPTIONS = (
+    "Ludovic Hamel",
+    "Pierre-Luc Paré",
+    "Daniel Antoine Lambert",
+    "Jerome Pelletier",
+    "Dominic Bourget",
+    "Eric Nolin",
+    "Adam Giraudias",
+)
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
 from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
@@ -1706,6 +1715,18 @@ class MainWindow(QtWidgets.QWidget):
             )
             return value_input
 
+        if field.field_id == "technician":
+            value_input = QtWidgets.QComboBox()
+            value_input.setEditable(True)
+            value_input.addItems(DEFAULT_TECHNICIAN_OPTIONS)
+            value_input.currentTextChanged.connect(
+                lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            value_input.lineEdit().editingFinished.connect(
+                lambda input_widget=value_input: self._add_combo_value_if_missing(input_widget)
+            )
+            return value_input
+
         value_input = QtWidgets.QLineEdit()
         value_input.setPlaceholderText("Add details")
         if field.field_id == HOSTNAME_FIELD_ID:
@@ -2121,6 +2142,10 @@ class MainWindow(QtWidgets.QWidget):
             widget.setText(value)
             return
         if isinstance(widget, QtWidgets.QComboBox):
+            if widget.isEditable():
+                self._add_combo_value_if_missing(widget, value)
+                widget.setCurrentText(value)
+                return
             normalized_value = self._normalize_numbering_value(value)
             index = widget.findText(normalized_value)
             widget.setCurrentIndex(index if index >= 0 else 0)
@@ -2128,6 +2153,14 @@ class MainWindow(QtWidgets.QWidget):
         if isinstance(widget, QtWidgets.QDateEdit):
             parsed_date = QtCore.QDate.fromString(value, "yyyy-MM-dd")
             widget.setDate(parsed_date if parsed_date.isValid() else QtCore.QDate.currentDate())
+
+    def _add_combo_value_if_missing(self, widget: QtWidgets.QComboBox, value: str | None = None) -> None:
+        candidate = (value if value is not None else widget.currentText()).strip()
+        if not candidate:
+            return
+        if widget.findText(candidate) >= 0:
+            return
+        widget.addItem(candidate)
 
     def _build_tasks(self) -> list[ApplyTask]:
         tasks = [
