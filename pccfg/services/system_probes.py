@@ -4,6 +4,7 @@ import json
 import re
 from typing import Callable
 
+from pccfg.domain.models import InstallApp
 from pccfg.services.command_runner import DEFAULT_INSPECT_TIMEOUT_SEC, run_command_with_options
 
 
@@ -189,47 +190,112 @@ def detect_remote_desktop_readiness(cancel_requested: Callable[[], bool] | None 
     return ok, f"Enabled={'OK' if enabled else 'FAIL'}, NLA={'OK' if nla else 'FAIL'}, Service={'OK' if service else 'FAIL'}, Firewall={'OK' if firewall else 'FAIL'}"
 
 
-def detect_software_installation(winget_id: str, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    command = ["winget", "list", "--id", winget_id, "--exact", "--accept-source-agreements"]
+def _match_winget_id_from_output(raw_output: str, winget_id: str) -> bool:
+    rows = parse_json_payload(raw_output)
+    normalized_id = winget_id.lower()
+    for row in rows:
+        package_id = str(row.get("Id") or row.get("PackageIdentifier") or "").strip().lower()
+        if package_id == normalized_id:
+            return True
+
+    for line in raw_output.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-"):
+            continue
+        columns = re.split(r"\s{2,}", stripped)
+        if len(columns) < 2:
+            continue
+        candidate_id = columns[1].strip().lower()
+        if candidate_id == normalized_id:
+            return True
+    return False
+
+
+def _detect_from_registry(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    display_names = [name.strip().lower() for name in app.detect_display_names if name.strip()]
+    if not display_names:
+        display_names = [app.label.strip().lower()]
+
+    publishers = [name.strip().lower() for name in app.detect_publishers if name.strip()]
+
+    probe_command = (
+        "$paths = @(" 
+        "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," 
+        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," 
+        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'" 
+        "); "
+        "$rows = foreach ($path in $paths) { "
+        "Get-ItemProperty -Path $path -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.DisplayName } | "
+        "Select-Object @{N='Scope';E={$path}}, DisplayName, Publisher "
+        "}; "
+        "$rows | ConvertTo-Json -Compress"
+    )
     rc, output = run_command_with_options(
-        command,
+        ["powershell", "-NoProfile", "-Command", probe_command],
         timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
         cancel_requested=cancel_requested,
     )
-    if rc not in {0, 1}:
+    if rc != 0:
         return None, "Unable to query"
 
-    normalized = output.lower()
-    if winget_id.lower() in normalized:
-        return True, "Installed"
+    rows = parse_json_payload(output)
+    if not rows:
+        return False, "Not installed"
 
-    def _fallback_probe() -> tuple[bool | None, str] | None:
-        if winget_id == "Notepad++.Notepad++":
-            fallback_cmd = [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                "$paths = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-                "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');"
-                "Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | "
-                "Where-Object { $_.DisplayName -like 'Notepad++*' } | "
-                "Select-Object -First 1 -ExpandProperty DisplayName",
-            ]
-            fallback_rc, fallback_out = run_command_with_options(
-                fallback_cmd,
-                timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-                cancel_requested=cancel_requested,
-            )
-            if fallback_rc == 0 and compact_single_line(fallback_out):
-                return True, "Installed (registry)"
-            return False, "Not installed"
-        return None
+    for row in rows:
+        display_name = str(row.get("DisplayName") or "").strip()
+        publisher = str(row.get("Publisher") or "").strip()
+        scope = str(row.get("Scope") or "registry").strip()
+        normalized_display = display_name.lower()
+        normalized_publisher = publisher.lower()
 
-    fallback = _fallback_probe()
-    if fallback is not None:
-        return fallback
+        name_match = any(pattern in normalized_display for pattern in display_names)
+        publisher_match = bool(publishers) and any(pattern in normalized_publisher for pattern in publishers)
+        if name_match or publisher_match:
+            return True, f"Installed (registry {scope}: {display_name})"
 
     return False, "Not installed"
+
+
+def detect_software_installation(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    winget_command = [
+        "winget",
+        "list",
+        "--id",
+        app.winget_id,
+        "--exact",
+        "--accept-source-agreements",
+        "--output",
+        "json",
+    ]
+    winget_rc, winget_output = run_command_with_options(
+        winget_command,
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+
+    if winget_rc == 0 and _match_winget_id_from_output(winget_output, app.winget_id):
+        return True, "Installed (winget)"
+
+    if winget_rc not in {0, 1}:
+        text_rc, text_output = run_command_with_options(
+            ["winget", "list", "--id", app.winget_id, "--exact", "--accept-source-agreements"],
+            timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+            cancel_requested=cancel_requested,
+        )
+        if text_rc == 0 and _match_winget_id_from_output(text_output, app.winget_id):
+            return True, "Installed (winget)"
+        if text_rc not in {0, 1}:
+            registry_ok, registry_detail = _detect_from_registry(app, cancel_requested)
+            if registry_ok is None:
+                return None, "Unable to query"
+            return registry_ok, registry_detail
+
+    registry_ok, registry_detail = _detect_from_registry(app, cancel_requested)
+    if registry_ok is None:
+        return None, "Unable to query"
+    return registry_ok, registry_detail
 
 
 def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:

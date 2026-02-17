@@ -1105,7 +1105,7 @@ class SetupWorker(QtCore.QObject):
         self.log_line.emit("Software")
         self.log_line.emit("-" * 60)
         for app in SOFTWARE_INSPECT_APPS:
-            installed_ok, installed_detail = detect_software_installation(app.winget_id, self._cancelled)
+            installed_ok, installed_detail = detect_software_installation(app, self._cancelled)
             task_label = ITEM_LABELS_BY_ID.get(app.inspect_item_id or "", app.label)
             if installed_ok is None:
                 self.log_line.emit(format_status_line(app.label, installed_detail, False))
