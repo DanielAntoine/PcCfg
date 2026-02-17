@@ -530,23 +530,50 @@ def detect_software_installation(winget_id: str, cancel_requested: Callable[[], 
         cancel_requested=cancel_requested,
     )
     if rc != 0:
-        if winget_id == "Google.Chrome":
-            chrome_paths = [
-                "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
-                "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
-                "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
-            ]
+        fallback_checks: dict[str, tuple[list[str], list[str]]] = {
+            "Google.Chrome": (
+                [
+                    "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
+                    "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
+                    "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
+                ],
+                ["chrome"],
+            ),
+            "Bitfocus.Companion": (
+                [
+                    "${env:ProgramFiles}\\Companion\\Companion.exe",
+                    "${env:ProgramFiles(x86)}\\Companion\\Companion.exe",
+                    "${env:LocalAppData}\\Programs\\Companion\\Companion.exe",
+                ],
+                ["Companion"],
+            ),
+            "Elgato.StreamDeck": (
+                [
+                    "${env:ProgramFiles}\\Elgato\\StreamDeck\\StreamDeck.exe",
+                    "${env:ProgramFiles(x86)}\\Elgato\\StreamDeck\\StreamDeck.exe",
+                    "${env:LocalAppData}\\Elgato\\StreamDeck\\StreamDeck.exe",
+                ],
+                ["StreamDeck"],
+            ),
+        }
+        fallback = fallback_checks.get(winget_id)
+        if fallback:
+            fallback_paths, fallback_commands = fallback
             fallback_command = (
-                "$paths=@(" + ",".join(f"'{path}'" for path in chrome_paths) + "); "
-                "if (($paths | Where-Object { Test-Path $_ } | Select-Object -First 1) -or (Get-Command chrome -ErrorAction SilentlyContinue)) { 'Installed' }"
+                "$paths=@(" + ",".join(f"'{path}'" for path in fallback_paths) + "); "
+                "$commands=@(" + ",".join(f"'{name}'" for name in fallback_commands) + "); "
+                "$pathHit = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1; "
+                "$commandHit = $commands | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1; "
+                "if ($pathHit) { $pathHit } elseif ($commandHit) { $commandHit }"
             )
             fallback_rc, fallback_output = run_command_with_options(
                 ["powershell", "-NoProfile", "-Command", fallback_command],
                 timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
                 cancel_requested=cancel_requested,
             )
-            if fallback_rc == 0 and compact_single_line(fallback_output):
-                return True, "Installed (fallback detection)"
+            fallback_hit = compact_single_line(fallback_output)
+            if fallback_rc == 0 and fallback_hit:
+                return True, f"Installed (fallback: {fallback_hit})"
         return None, "Unable to query"
 
     lowered = output.lower()
