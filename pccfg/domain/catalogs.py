@@ -3,31 +3,35 @@ from __future__ import annotations
 from .models import InstallApp, ManualInstallApp
 
 INSTALL_APPS: tuple[InstallApp, ...] = (
-    InstallApp("chrome", "Google Chrome", "Google.Chrome", "Utilities for creators"),
-    InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post"),
-    InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post"),
-    InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake", "Core video editing / post"),
-    InstallApp("avidemux", "Avidemux", "Avidemux.Avidemux", "Core video editing / post"),
-    InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio", "Capture / streaming / recording"),
-    InstallApp("sharex", "ShareX", "ShareX.ShareX", "Capture / streaming / recording"),
-    InstallApp("audacity", "Audacity", "Audacity.Audacity", "Audio for video"),
-    InstallApp("reaper", "REAPER", "Cockos.REAPER", "Audio for video"),
-    InstallApp("vlc", "VLC media player", "VideoLAN.VLC", "Codecs / media tools"),
-    InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg", "Codecs / media tools"),
-    InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI", "Codecs / media tools"),
-    InstallApp("mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix", "Codecs / media tools"),
-    InstallApp("blender", "Blender", "BlenderFoundation.Blender", "Motion graphics / VFX / 3D"),
-    InstallApp("natron", "Natron", "Natron.Natron", "Motion graphics / VFX / 3D"),
-    InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++", "Utilities for creators"),
-    InstallApp("seven_zip", "7-Zip", "7zip.7zip", "Utilities for creators"),
-    InstallApp("everything", "Everything", "voidtools.Everything", "Utilities for creators"),
-    InstallApp("crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo", "Utilities for creators"),
-    InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
-    InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support"),
-    InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support"),
-    InstallApp("parsec", "Parsec", "Parsec.Parsec", "Remote support"),
-    InstallApp("companion", "Bitfocus Companion", "Bitfocus.Companion", "Control surfaces"),
-    InstallApp("streamdeck", "Elgato Stream Deck", "Elgato.StreamDeck", "Control surfaces"),
+    InstallApp("chrome", "Google Chrome", "Google.Chrome", "Utilities for creators", "software_google_chrome"),
+    InstallApp("shotcut", "Shotcut", "Meltytech.Shotcut", "Core video editing / post", "software_shotcut"),
+    InstallApp("kdenlive", "Kdenlive", "KDE.Kdenlive", "Core video editing / post", "software_kdenlive"),
+    InstallApp("handbrake", "HandBrake", "HandBrake.HandBrake", "Core video editing / post", "software_handbrake"),
+    InstallApp("avidemux", "Avidemux", "Avidemux.Avidemux", "Core video editing / post", "software_avidemux"),
+    InstallApp("obs", "OBS Studio", "OBSProject.OBSStudio", "Capture / streaming / recording", "software_obs_studio"),
+    InstallApp("sharex", "ShareX", "ShareX.ShareX", "Capture / streaming / recording", "software_sharex"),
+    InstallApp("audacity", "Audacity", "Audacity.Audacity", "Audio for video", "software_audacity"),
+    InstallApp("reaper", "REAPER", "Cockos.REAPER", "Audio for video", "software_reaper"),
+    InstallApp("vlc", "VLC media player", "VideoLAN.VLC", "Codecs / media tools", "software_vlc_media_player"),
+    InstallApp("ffmpeg", "FFmpeg", "Gyan.FFmpeg", "Codecs / media tools", "software_ffmpeg"),
+    InstallApp("mediainfo", "MediaInfo", "MediaArea.MediaInfo.GUI", "Codecs / media tools", "software_mediainfo"),
+    InstallApp("mkvtoolnix", "MKVToolNix", "MoritzBunkus.MKVToolNix", "Codecs / media tools", "software_mkvtoolnix"),
+    InstallApp("blender", "Blender", "BlenderFoundation.Blender", "Motion graphics / VFX / 3D", "software_blender"),
+    InstallApp("natron", "Natron", "Natron.Natron", "Motion graphics / VFX / 3D", "software_natron"),
+    InstallApp("notepadpp", "Notepad++", "Notepad++.Notepad++", "Utilities for creators", "software_notepadpp"),
+    InstallApp("seven_zip", "7-Zip", "7zip.7zip", "Utilities for creators", "software_7_zip"),
+    InstallApp("everything", "Everything", "voidtools.Everything", "Utilities for creators", "software_everything"),
+    InstallApp("crystaldiskinfo", "CrystalDiskInfo", "CrystalDewWorld.CrystalDiskInfo", "Utilities for creators", "software_crystaldiskinfo"),
+    InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators", "software_hwinfo"),
+    InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support", "software_anydesk"),
+    InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support", "software_teamviewer"),
+    InstallApp("parsec", "Parsec", "Parsec.Parsec", "Remote support", "software_parsec"),
+    InstallApp("companion", "Bitfocus Companion", "Bitfocus.Companion", "Control surfaces", "software_companion"),
+    InstallApp("streamdeck", "Elgato Stream Deck", "Elgato.StreamDeck", "Control surfaces", "software_stream_deck"),
+)
+
+SOFTWARE_INSPECT_APPS: tuple[InstallApp, ...] = tuple(
+    app for app in INSTALL_APPS if app.inspect_item_id
 )
 
 MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
@@ -38,3 +42,18 @@ MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
     ManualInstallApp("nvidia_drivers", "NVIDIA Drivers", "GPU drivers", "https://www.nvidia.com/Download/index.aspx"),
     ManualInstallApp("screenconnect", "ScreenConnect", "Remote support", "https://screenconnect.connectwise.com/download"),
 )
+
+
+def validate_install_app_catalog() -> None:
+    seen_keys: set[str] = set()
+    seen_inspect_ids: set[str] = set()
+    for app in INSTALL_APPS:
+        if app.key in seen_keys:
+            raise ValueError(f"Duplicate install app key: {app.key}")
+        seen_keys.add(app.key)
+
+        if not app.inspect_item_id:
+            continue
+        if app.inspect_item_id in seen_inspect_ids:
+            raise ValueError(f"Duplicate inspect item id: {app.inspect_item_id}")
+        seen_inspect_ids.add(app.inspect_item_id)

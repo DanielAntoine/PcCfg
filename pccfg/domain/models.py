@@ -17,6 +17,7 @@ class InstallApp:
     label: str
     winget_id: str
     category: str
+    inspect_item_id: str | None = None
 
 
 @dataclass
