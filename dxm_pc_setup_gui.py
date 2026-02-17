@@ -409,47 +409,53 @@ class DragCheckTreeWidget(QtWidgets.QTreeWidget):
 
 
 class DragCheckBox(QtWidgets.QCheckBox):
-    """QCheckBox that supports click-and-drag toggling across peer checkboxes."""
+    """App checkbox class (drag behavior is provided by :class:`DragCheckBoxEventFilter`)."""
 
-    _drag_active = False
-    _drag_state = False
 
-    @classmethod
-    def _stop_drag_if_released(cls) -> None:
-        if not (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
-            cls._drag_active = False
+class DragCheckBoxEventFilter(QtCore.QObject):
+    """Enable click-and-drag checkbox toggling for every checkbox widget in the UI."""
 
-    def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.LeftButton:
-            DragCheckBox._drag_active = True
-            DragCheckBox._drag_state = not self.isChecked()
-            self.setChecked(DragCheckBox._drag_state)
-            event.accept()
-            return
-        super().mousePressEvent(event)
+    def __init__(self, parent: QtCore.QObject | None = None) -> None:
+        super().__init__(parent)
+        self._drag_active = False
+        self._drag_state = False
 
-    def mouseMoveEvent(self, event: QtGui.QMouseEvent) -> None:
-        DragCheckBox._stop_drag_if_released()
-        if DragCheckBox._drag_active and (event.buttons() & QtCore.Qt.LeftButton):
-            self.setChecked(DragCheckBox._drag_state)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        self._stop_drag_if_released()
 
-    def enterEvent(self, event: QtCore.QEvent) -> None:
-        DragCheckBox._stop_drag_if_released()
-        if DragCheckBox._drag_active and (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
-            self.setChecked(DragCheckBox._drag_state)
-            event.accept()
-            return
-        super().enterEvent(event)
+        if isinstance(watched, QtWidgets.QCheckBox):
+            if event.type() == QtCore.QEvent.MouseButtonPress:
+                mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
+                if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton:
+                    self._drag_active = True
+                    self._drag_state = not watched.isChecked()
+                    watched.setChecked(self._drag_state)
+                    event.accept()
+                    return True
 
-    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
-        if event.button() == QtCore.Qt.LeftButton and DragCheckBox._drag_active:
-            DragCheckBox._drag_active = False
-            event.accept()
-            return
-        super().mouseReleaseEvent(event)
+            if event.type() in {QtCore.QEvent.MouseMove, QtCore.QEvent.Enter}:
+                if self._drag_active and (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
+                    watched.setChecked(self._drag_state)
+                    event.accept()
+                    return True
+
+            if event.type() == QtCore.QEvent.MouseButtonRelease:
+                mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
+                if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton and self._drag_active:
+                    self._drag_active = False
+                    event.accept()
+                    return True
+
+        elif self._drag_active and event.type() == QtCore.QEvent.MouseButtonRelease:
+            mouse_event = event if isinstance(event, QtGui.QMouseEvent) else None
+            if mouse_event and mouse_event.button() == QtCore.Qt.LeftButton:
+                self._drag_active = False
+
+        return super().eventFilter(watched, event)
+
+    def _stop_drag_if_released(self) -> None:
+        if self._drag_active and not (QtWidgets.QApplication.mouseButtons() & QtCore.Qt.LeftButton):
+            self._drag_active = False
 
 
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
@@ -1587,6 +1593,10 @@ class InstalledCardsInput(QtWidgets.QWidget):
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._drag_checkbox_filter = DragCheckBoxEventFilter(self)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._drag_checkbox_filter)
         self.setWindowTitle(APP_NAME)
         self.resize(920, 700)
 
