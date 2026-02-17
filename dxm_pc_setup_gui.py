@@ -1973,7 +1973,7 @@ class MainWindow(QtWidgets.QWidget):
         if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return ""
 
-        return f"{client_name}-{role_value[:4]}-{numbering_value}"
+        return f"{client_hostname}-{role_value[:4]}-{numbering_value}"
 
 
     @staticmethod
