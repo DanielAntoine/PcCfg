@@ -131,16 +131,9 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Open text report automatically after save; show dialog if opening fails.
 - [x] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
 - [x] add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck
-- 
-## TODO
-- [ ] Add Inspect output (informational only) to log console and report output:
-  - CPU (short value)
-  - Motherboard (short value)
-  - BIOS version (short value)
-  - IP (IPv4 + IPv6 across all adapters)
-  - Hostname 
-- [ ] After Run, show "restart may be needed" popup only for specific actions that can require reboot:
-  - Dialog buttons: `Restart now` and `Restart later`.
-  - Include which tasks triggered reboot requirement.
-- [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
 - [x] dont show hostname date filename in checklist
+
+## TODO
+- [ ] Add Inspect output (informational only) to log console and report output ,CPU (short value) ,Motherboard (short value), BIOS version (short value), IP (IPv4 + IPv6 across all adapters)
+- [ ] After Run, show "restart may be needed" add a Dialog buttons: `Restart now` and `Restart later`.
+- [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
