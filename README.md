@@ -143,3 +143,4 @@ Install-Package <name> -Force -Confirm:$false
   - Enable NLA.
 - [ ] Add `https://www.nvidia.com/Download/index.aspx` to Manual Install list only.
 - [ ] Open text report automatically after save; show dialog if opening fails.
+- [ ] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
