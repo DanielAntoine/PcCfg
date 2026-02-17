@@ -1371,6 +1371,7 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_runtime_status: dict[str, tuple[str, str]] = {}
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
         self.checklist_item_states: dict[str, str] = {}
+        field_ids_rendered_in_sections: set[str] = set()
         for section in SECTIONS:
             section_header = QtWidgets.QTreeWidgetItem([section.label, "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
@@ -1403,6 +1404,7 @@ class MainWindow(QtWidgets.QWidget):
                 field = FIELDS_BY_ID.get(section_item.item_id) or FIELDS_BY_LABEL.get(section_item.label)
                 if field is None:
                     continue
+                field_ids_rendered_in_sections.add(field.field_id)
 
                 if field.field_type == "date":
                     value_input = QtWidgets.QDateEdit()
@@ -1429,6 +1431,50 @@ class MainWindow(QtWidgets.QWidget):
                     )
 
                 self.installation_checklist_tree.setItemWidget(checklist_item, 2, value_input)
+                self.checklist_info_inputs[field.field_id] = value_input
+
+        export_only_fields = [field for field in CHECKLIST_FIELDS if field.field_id not in field_ids_rendered_in_sections]
+        if export_only_fields:
+            section_header = QtWidgets.QTreeWidgetItem(["Info fields (export only)", "", ""])
+            section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
+            section_header.setFirstColumnSpanned(True)
+            section_font = section_header.font(0)
+            section_font.setBold(True)
+            section_header.setFont(0, section_font)
+            self.installation_checklist_tree.addTopLevelItem(section_header)
+
+            for field in export_only_fields:
+                info_item = QtWidgets.QTreeWidgetItem([wrap_task_label(field.label), "", ""])
+                info_item.setFlags(info_item.flags() & ~QtCore.Qt.ItemIsSelectable)
+                info_item.setData(0, QtCore.Qt.UserRole, field.field_id)
+                info_item.setToolTip(0, field.label)
+                self.installation_checklist_tree.addTopLevelItem(info_item)
+
+                if field.field_type == "date":
+                    value_input = QtWidgets.QDateEdit()
+                    value_input.setDisplayFormat("yyyy-MM-dd")
+                    value_input.setCalendarPopup(True)
+                    value_input.setDate(QtCore.QDate.currentDate())
+                    value_input.dateChanged.connect(
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+                    )
+                elif field.field_type == "numbering":
+                    value_input = QtWidgets.QComboBox()
+                    value_input.addItems([f"{number:02d}" for number in range(1, 100)])
+                    value_input.currentTextChanged.connect(
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+                    )
+                else:
+                    value_input = QtWidgets.QLineEdit()
+                    value_input.setPlaceholderText("Add details")
+                    if field.field_id == HOSTNAME_FIELD_ID:
+                        value_input.setReadOnly(True)
+                        value_input.setPlaceholderText("Auto-generated")
+                    value_input.textChanged.connect(
+                        lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+                    )
+
+                self.installation_checklist_tree.setItemWidget(info_item, 2, value_input)
                 self.checklist_info_inputs[field.field_id] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
