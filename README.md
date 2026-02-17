@@ -102,7 +102,7 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Detect internet reachability during Inspect (for example via DNS/ping test), and update the matching checklist item automatically when detection passes.
 - [x] For each Inspect detection result, sync checklist state so passing checks can auto-check their mapped checklist tasks while failed/unknown checks remain visible for manual follow-up.
 - [ ] Add a client profile config section:
-  - Save profile as `{InputName}.json`.
+  - Save profile as `{InputName}-{yymmdd}.json`.
   - Include a default profile.
   - Support marking checklist items as `Not Applicable` (right-click), and treat them as skipped.
   - Apply profile changes only after save + reload.
@@ -118,8 +118,8 @@ Install-Package <name> -Force -Confirm:$false
   - Add Inspect validation for installed + running + listening (port 22).
 - [ ] Add Parsec support:
   - Add Parsec download/install option.
-  - Use `winget` silent install if available.
-  - Do not add as an Inspect/Apply checklist status item.
+  - Use `winget` silent install.
+  - Apply checklist status item.
 
 ## plan
 - [ ] Disk usage detection automation:
