@@ -92,7 +92,7 @@ Install-Package <name> -Force -Confirm:$false
 - Keep installers idempotent in scripts (check whether software is already installed before re-running).
 - Avoid `yes`-style piping on Windows; silent flags are safer and more predictable.
 
-## TODO
+## DONE
 - [x] Redesign the full checklist/table layout spacing so columns align cleanly, content does not drift to the right, and row/task spacing is consistently sized across the UI.
 - [x] Constrain long checklist text to wrap to a maximum of 2 lines; use the second line only when needed so single-line content does not reserve extra blank row height.
 - [x] Replace plain checklist status text with status chips (`PASS`, `FAIL`, `PENDING`, `RUNNING`) and apply consistent color semantics per status across the UI.
@@ -131,6 +131,8 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Open text report automatically after save; show dialog if opening fails.
 - [x] modify the checklist "Software (client-provided)" to "Software" and list all software there individualy. set all to non applicable excepte for Screenconnect, all to "inspect" to validate the apps install
 - [x] add winget install -e --id Bitfocus.Companion and winget install -e --id Elgato.StreamDeck
+- 
+## TODO
 - [ ] Add Inspect output (informational only) to log console and report output:
   - CPU (short value)
   - Motherboard (short value)
@@ -140,4 +142,5 @@ Install-Package <name> -Force -Confirm:$false
 - [ ] After Run, show "restart may be needed" popup only for specific actions that can require reboot:
   - Dialog buttons: `Restart now` and `Restart later`.
   - Include which tasks triggered reboot requirement.
-- [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist
+- [ ] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
+- [ ] dont show hostname date filename in checklist
