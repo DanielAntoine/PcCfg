@@ -39,6 +39,7 @@ from pccfg.domain.checklist import (
     CHECKLIST_TASK_MAX_LEN,
     FIELD_IDS_BY_LABEL,
     FIELDS_BY_ID,
+    FIELDS_BY_LABEL,
     ITEM_IDS_BY_LABEL,
     ITEM_LABELS_BY_ID,
     SECTIONS,
@@ -1399,7 +1400,7 @@ class MainWindow(QtWidgets.QWidget):
                 self.checklist_runtime_status[section_item.item_id] = ("PENDING", "Waiting")
                 self.checklist_item_states[section_item.item_id] = "UNCHECKED"
 
-                field = FIELDS_BY_ID.get(section_item.item_id)
+                field = FIELDS_BY_ID.get(section_item.item_id) or FIELDS_BY_LABEL.get(section_item.label)
                 if field is None:
                     continue
 
@@ -1894,7 +1895,8 @@ class MainWindow(QtWidgets.QWidget):
         ]
 
         for field in CHECKLIST_FIELDS:
-            value = self._read_checklist_info_value(self.checklist_info_inputs[field.field_id])
+            widget = self.checklist_info_inputs.get(field.field_id)
+            value = self._read_checklist_info_value(widget) if widget is not None else ""
             lines.append(f"- {field.label}: {value or '-'}")
 
         lines.append("")
