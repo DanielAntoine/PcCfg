@@ -21,7 +21,7 @@ TECHNICIAN_DEFAULT_OPTIONS: tuple[str, ...] = (
 COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
     "Color",
     "Compositor",
-    "Broadcast"
+    "Broadcast",
     "Wrangler",
     "Editor",
     "Playback",
