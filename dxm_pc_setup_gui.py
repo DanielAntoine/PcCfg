@@ -1407,7 +1407,7 @@ class SetupWorker(QtCore.QObject):
                     self.log_line.emit(f"    -> {status}")
                     self.step_finished.emit(step_name, rc == 0)
                 if step.label == "Parsec":
-                    self.checklist_status.emit("Install Parsec", "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
+                    self.checklist_status.emit("Parsec", "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
                 if out:
                     self.log_line.emit(f"    {out}")
                 self.log_line.emit("")
