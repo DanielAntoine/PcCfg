@@ -25,6 +25,7 @@ INSTALL_APPS: tuple[InstallApp, ...] = (
     InstallApp("hwinfo", "HWInfo", "REALiX.HWiNFO", "Utilities for creators"),
     InstallApp("anydesk", "AnyDesk", "AnyDeskSoftwareGmbH.AnyDesk", "Remote support"),
     InstallApp("teamviewer", "TeamViewer", "TeamViewer.TeamViewer", "Remote support"),
+    InstallApp("parsec", "Parsec", "Parsec.Parsec", "Remote support"),
 )
 
 MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (

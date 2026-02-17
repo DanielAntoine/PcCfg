@@ -5,6 +5,8 @@ from pathlib import Path
 from .models import ChecklistField, ChecklistItem, ChecklistSection
 
 CHECKLIST_LOG_FILE = Path(__file__).resolve().parents[2] / "installation_checklist_log.json"
+CHECKLIST_PROFILE_DIR = Path(__file__).resolve().parents[2] / "profiles"
+DEFAULT_PROFILE_FILE = CHECKLIST_PROFILE_DIR / "default-profile.json"
 CHECKLIST_TASK_MAX_LEN = 52
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
@@ -121,6 +123,8 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("test_usb", "Test USB ports"),
             ChecklistItem("test_wifi", "Test Wi-Fi"),
             ChecklistItem("install_screenconnect", "Install ScreenConnect"),
+            ChecklistItem("install_parsec", "Install Parsec"),
+            ChecklistItem("validate_ssh", "Validate SSH (installed + running + listening:22)"),
             ChecklistItem("test_remote", "Test remote connection"),
             ChecklistItem("record_scid", "Record ScreenConnect ID"),
             ChecklistItem("vault_passwords", "Passwords and keys stored in Vault"),

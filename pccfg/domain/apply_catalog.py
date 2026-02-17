@@ -66,4 +66,26 @@ APPLY_TASK_DEFINITIONS: tuple[ApplyTaskDefinition, ...] = (
             ("reg", "add", "HKCU\\SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", "/v", "DisableNotificationCenter", "/t", "REG_DWORD", "/d", "1", "/f"),
         ),
     ),
+    ApplyTaskDefinition(
+        "windows_update_auto",
+        "Automate Windows Update scan/download/install",
+        ((
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; Install-Module PSWindowsUpdate -Force; Import-Module PSWindowsUpdate; Install-WindowsUpdate -AcceptAll -IgnoreReboot",
+        ),),
+    ),
+    ApplyTaskDefinition(
+        "ssh_setup",
+        "Install/enable OpenSSH Server + firewall",
+        ((
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "$cap = Get-WindowsCapability -Online -Name OpenSSH.Server* -ErrorAction SilentlyContinue | Select-Object -First 1; if ($cap -and $cap.State -ne 'Installed') { Add-WindowsCapability -Online -Name $cap.Name | Out-Null }; Set-Service -Name sshd -StartupType Automatic -ErrorAction SilentlyContinue; Start-Service sshd -ErrorAction SilentlyContinue; Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue",
+        ),),
+    ),
 )

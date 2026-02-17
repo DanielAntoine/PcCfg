@@ -8,7 +8,7 @@ from pccfg.domain.checklist import FIELD_IDS_BY_LABEL, ITEM_IDS_BY_LABEL
 
 def save_checklist_state(
     path: Path,
-    checklist_values_by_item_id: dict[str, bool],
+    checklist_values_by_item_id: dict[str, str],
     info_values_by_field_id: dict[str, str],
 ) -> None:
     payload = {
@@ -18,7 +18,7 @@ def save_checklist_state(
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def load_checklist_state(path: Path) -> tuple[dict[str, bool], dict[str, str]]:
+def load_checklist_state(path: Path) -> tuple[dict[str, str], dict[str, str]]:
     if not path.exists():
         return {}, {}
 
@@ -26,10 +26,15 @@ def load_checklist_state(path: Path) -> tuple[dict[str, bool], dict[str, str]]:
     raw_items = raw.get("items", {})
     raw_info = raw.get("info", {})
 
-    item_state: dict[str, bool] = {}
+    item_state: dict[str, str] = {}
     for key, value in raw_items.items():
         item_id = ITEM_IDS_BY_LABEL.get(key, key)
-        item_state[item_id] = bool(value)
+        if isinstance(value, str):
+            normalized = value.upper()
+            if normalized in {"CHECKED", "UNCHECKED", "NA"}:
+                item_state[item_id] = normalized
+                continue
+        item_state[item_id] = "CHECKED" if bool(value) else "UNCHECKED"
 
     info_state: dict[str, str] = {}
     for key, value in raw_info.items():
