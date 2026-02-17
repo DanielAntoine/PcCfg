@@ -101,26 +101,26 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Detect whether Wi-Fi is connected during Inspect (connected/disconnected + SSID/signal when available), and update the matching checklist item automatically when detection passes.
 - [x] Detect internet reachability during Inspect (for example via DNS/ping test), and update the matching checklist item automatically when detection passes.
 - [x] For each Inspect detection result, sync checklist state so passing checks can auto-check their mapped checklist tasks while failed/unknown checks remain visible for manual follow-up.
-- [ ] Add a client profile config section:
+- [x] Add a client profile config section:
   - Save profile as `{InputName}-{yymmdd}.json`.
   - Include a default profile.
   - Support marking checklist items as `Not Applicable` (right-click), and treat them as skipped.
   - Apply profile changes only after save + reload.
-- [ ] Enforce computer name/hostname format with all 3 required elements:
+- [x] Enforce computer name/hostname format with all 3 required elements:
   - `ClientName`, `Role`, and `numbering00`.
   - Pattern remains `{ClientNamePascal}-{Role2LUpper}-{numbering00}`.
   - Block **Apply** if any required element is missing.
   - No manual override of generated name.
-- [ ] Add SSH setup in app:
+- [x] Add SSH setup in app:
   - Install/enable OpenSSH Server only if missing.
   - Set service startup type to `Automatic`.
   - Ensure Windows Firewall SSH rule is enabled.
   - Add Inspect validation for installed + running + listening (port 22).
-- [ ] Add Parsec support:
+- [x] Add Parsec support:
   - Add Parsec download/install option.
   - Use `winget` silent install.
   - Apply checklist status item.
-- [ ] Disk usage detection automation:
+- [x] Disk usage detection automation:
   - Detect disks that are not used for anything (no meaningful mounted/active volume usage), rather than only checking drive-letter assignment.
 - [ ] Windows Update automation:
   - Fully automate scan/download/install.

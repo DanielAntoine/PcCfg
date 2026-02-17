@@ -268,6 +268,11 @@ QLabel#checklistStatusChip[chipStatus="RUNNING"] {
     color: #eaf4ff;
 }
 
+QLabel#checklistStatusChip[chipStatus="NA"] {
+    background-color: #5a4a22;
+    color: #ffe9b0;
+}
+
 QTreeWidget#installationChecklistTree::indicator {
     width: 16px;
     height: 16px;

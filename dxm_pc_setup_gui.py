@@ -27,13 +27,15 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 APP_VERSION = "1.0.0"
 APP_NAME = f"DXM - PC Setup v{APP_VERSION} (PyQt)"
 CHECKLIST_WRAP_LINE_LEN = 64
-STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING")
+STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
 from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS
 from pccfg.domain.checklist import (
     CHECKLIST_FIELDS,
     CHECKLIST_LOG_FILE,
+    CHECKLIST_PROFILE_DIR,
+    DEFAULT_PROFILE_FILE,
     CHECKLIST_TASK_MAX_LEN,
     FIELD_IDS_BY_LABEL,
     FIELDS_BY_ID,
@@ -373,6 +375,63 @@ def detect_internet_reachability(cancel_requested: Callable[[], bool] | None = N
     reachable = dns_ok or ping_ok
     detail = f"DNS={'OK' if dns_ok else 'FAIL'}, Ping={'OK' if ping_ok else 'FAIL'}"
     return reachable, detail
+
+
+def detect_unused_disks(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Detect disks with no meaningful mounted volume usage."""
+    command = (
+        "$rows = Get-Disk -ErrorAction SilentlyContinue | ForEach-Object { "
+        "$disk = $_; "
+        "$parts = Get-Partition -DiskNumber $disk.Number -ErrorAction SilentlyContinue; "
+        "$vols = @(); if ($parts) { $vols = $parts | Get-Volume -ErrorAction SilentlyContinue }; "
+        "$used = $false; "
+        "if ($vols) { $used = @($vols | Where-Object { $_.DriveLetter -or ($_.Size -gt 0 -and $_.FileSystemType) }).Count -gt 0 }; "
+        "[PSCustomObject]@{Number=$disk.Number;FriendlyName=$disk.FriendlyName;Used=$used} "
+        "}; $rows | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    rows = parse_json_payload(output)
+    if not rows:
+        return None, "No disk data"
+
+    unused = [f"Disk {row.get('Number')} ({row.get('FriendlyName', 'Unknown')})" for row in rows if not bool(row.get('Used'))]
+    if unused:
+        return True, f"Unused: {', '.join(unused)}"
+    return True, "No unused disks detected"
+
+
+def detect_ssh_readiness(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    """Validate OpenSSH Server install, service state, and port 22 listening."""
+    command = (
+        "$cap = Get-WindowsCapability -Online -Name OpenSSH.Server* -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty State; "
+        "$svc = Get-Service -Name sshd -ErrorAction SilentlyContinue; "
+        "$tcp = Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; "
+        "[PSCustomObject]@{Installed=($cap -eq 'Installed');Running=($svc -and $svc.Status -eq 'Running');Listening=[bool]$tcp} | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return None, "Unable to query"
+
+    rows = parse_json_payload(output)
+    if not rows:
+        return None, "No SSH data"
+    row = rows[0]
+    installed = bool(row.get("Installed"))
+    running = bool(row.get("Running"))
+    listening = bool(row.get("Listening"))
+    ok = installed and running and listening
+    return ok, f"Installed={'OK' if installed else 'FAIL'}, Running={'OK' if running else 'FAIL'}, Port22={'OK' if listening else 'FAIL'}"
 
 
 
@@ -743,6 +802,8 @@ class SetupWorker(QtCore.QObject):
             "Install network drivers (LAN/10GbE/Wi-Fi)": "RUNNING",
             "Test Wi-Fi": "RUNNING",
             "Test remote connection": "RUNNING",
+            "Ensure all disks are visible": "RUNNING",
+            "Validate SSH (installed + running + listening:22)": "RUNNING",
         }
         for task_label, status in inspect_checks.items():
             self.checklist_status.emit(task_label, status, False, "Inspect in progress")
@@ -875,6 +936,8 @@ class SetupWorker(QtCore.QObject):
         wifi_adapter_ok, wifi_adapter_detail = detect_wifi_adapter(self._cancelled)
         wifi_connected_ok, wifi_connected_detail = detect_wifi_connection(self._cancelled)
         internet_ok, internet_detail = detect_internet_reachability(self._cancelled)
+        disk_ok, disk_detail = detect_unused_disks(self._cancelled)
+        ssh_ok, ssh_detail = detect_ssh_readiness(self._cancelled)
 
         if wifi_adapter_ok is None:
             self.log_line.emit(format_status_line("Wi-Fi adapter", wifi_adapter_detail, False))
@@ -912,6 +975,25 @@ class SetupWorker(QtCore.QObject):
                 internet_detail,
             )
 
+        if disk_ok is None:
+            self.log_line.emit(format_status_line("Disk usage", disk_detail, False))
+            self.checklist_status.emit("Ensure all disks are visible", "PENDING", False, disk_detail)
+        else:
+            self.log_line.emit(format_status_line("Disk usage", disk_detail, disk_ok))
+            self.checklist_status.emit("Ensure all disks are visible", "PASS" if disk_ok else "FAIL", disk_ok, disk_detail)
+
+        if ssh_ok is None:
+            self.log_line.emit(format_status_line("SSH readiness", ssh_detail, False))
+            self.checklist_status.emit("Validate SSH (installed + running + listening:22)", "PENDING", False, ssh_detail)
+        else:
+            self.log_line.emit(format_status_line("SSH readiness", ssh_detail, ssh_ok))
+            self.checklist_status.emit(
+                "Validate SSH (installed + running + listening:22)",
+                "PASS" if ssh_ok else "FAIL",
+                ssh_ok,
+                ssh_detail,
+            )
+
         self.log_line.emit("")
         self.step_finished.emit("Connectivity", True)
         self.completed.emit(True, "done")
@@ -936,6 +1018,10 @@ class SetupWorker(QtCore.QObject):
             self.completed.emit(False, "failed")
             return
 
+        apply_task_map = {
+            "Automate Windows Update scan/download/install": "Run Windows Update until \"Up to date\"",
+            "Install/enable OpenSSH Server + firewall": "Validate SSH (installed + running + listening:22)",
+        }
         for idx, step in enumerate(self._apply_steps, start=1):
             if self._cancelled():
                 self.completed.emit(False, "cancelled")
@@ -964,6 +1050,9 @@ class SetupWorker(QtCore.QObject):
                     self.log_line.emit(f"    {out}")
             self.log_line.emit("")
             self.step_finished.emit(step_name, ok)
+            mapped_task = apply_task_map.get(step.label)
+            if mapped_task:
+                self.checklist_status.emit(mapped_task, "PASS" if ok else "FAIL", ok, f"Apply: {step.label}")
 
         if self._app_steps:
             self.log_line.emit("Applications installation")
@@ -991,6 +1080,8 @@ class SetupWorker(QtCore.QObject):
                     status = "OK" if rc == 0 else f"FAIL (exit {rc})"
                     self.log_line.emit(f"    -> {status}")
                     self.step_finished.emit(step_name, rc == 0)
+                if step.label == "Parsec":
+                    self.checklist_status.emit("Install Parsec", "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
                 if out:
                     self.log_line.emit(f"    {out}")
                 self.log_line.emit("")
@@ -1109,6 +1200,7 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.header().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
         self.installation_checklist_tree.header().setSectionResizeMode(2, QtWidgets.QHeaderView.ResizeToContents)
         self.installation_checklist_tree.setColumnWidth(1, 110)
+        self.installation_checklist_tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         checklist_group_layout.addWidget(self.installation_checklist_tree, stretch=1)
 
         self.checklist_status_bar = QtWidgets.QLabel("Ready")
@@ -1117,6 +1209,16 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_status_bar.setMinimumHeight(24)
         self.checklist_status_bar.setWordWrap(False)
         checklist_group_layout.addWidget(self.checklist_status_bar)
+
+        profile_row = QtWidgets.QHBoxLayout()
+        self.profile_selector = QtWidgets.QComboBox()
+        self.save_profile_button = QtWidgets.QPushButton("Save profile")
+        self.reload_profile_button = QtWidgets.QPushButton("Reload profile")
+        profile_row.addWidget(QtWidgets.QLabel("Profile"))
+        profile_row.addWidget(self.profile_selector, stretch=1)
+        profile_row.addWidget(self.save_profile_button)
+        profile_row.addWidget(self.reload_profile_button)
+        checklist_group_layout.addLayout(profile_row)
 
         checklist_buttons_row = QtWidgets.QHBoxLayout()
         checklist_buttons_row.addWidget(self.new_install_button)
@@ -1131,6 +1233,7 @@ class MainWindow(QtWidgets.QWidget):
         self.checklist_status_chips: dict[str, QtWidgets.QLabel] = {}
         self.checklist_runtime_status: dict[str, tuple[str, str]] = {}
         self.checklist_info_inputs: dict[str, QtWidgets.QWidget] = {}
+        self.checklist_item_states: dict[str, str] = {}
         for section in SECTIONS:
             section_header = QtWidgets.QTreeWidgetItem([section.label, "", ""])
             section_header.setFlags(section_header.flags() & ~QtCore.Qt.ItemIsSelectable)
@@ -1158,6 +1261,7 @@ class MainWindow(QtWidgets.QWidget):
                 self.installation_checklist_tree.setItemWidget(checklist_item, 1, status_chip)
                 self.checklist_status_chips[section_item.item_id] = status_chip
                 self.checklist_runtime_status[section_item.item_id] = ("PENDING", "Waiting")
+                self.checklist_item_states[section_item.item_id] = "UNCHECKED"
 
                 field = FIELDS_BY_ID.get(section_item.item_id)
                 if field is None:
@@ -1193,8 +1297,11 @@ class MainWindow(QtWidgets.QWidget):
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
         self.installation_checklist_tree.currentItemChanged.connect(self._on_checklist_item_focus_changed)
         self.installation_checklist_tree.itemEntered.connect(self._on_checklist_item_hovered)
+        self.installation_checklist_tree.customContextMenuRequested.connect(self._on_checklist_context_menu)
         self.installation_checklist_tree.resizeColumnToContents(2)
         self.installation_checklist_tree.setColumnWidth(1, 110)
+        self._ensure_profile_storage()
+        self._refresh_profile_selector()
         self._load_installation_checklist_state()
         self._update_installation_checklist_progress()
         self.installation_checklist_group.setMinimumWidth(820)
@@ -1234,6 +1341,8 @@ class MainWindow(QtWidgets.QWidget):
         self.export_installation_report_button.clicked.connect(self._export_installation_report)
         self.cancel_button.clicked.connect(self._request_cancel)
         self.save_report_button.clicked.connect(self._save_report_txt)
+        self.save_profile_button.clicked.connect(self._save_profile)
+        self.reload_profile_button.clicked.connect(self._reload_selected_profile)
 
         self._worker_thread: QtCore.QThread | None = None
         self._worker: SetupWorker | None = None
@@ -1245,8 +1354,10 @@ class MainWindow(QtWidgets.QWidget):
             task_id = _item.data(0, QtCore.Qt.UserRole)
             if isinstance(task_id, str) and task_id:
                 if _item.checkState(0) == QtCore.Qt.Checked:
+                    self.checklist_item_states[task_id] = "CHECKED"
                     self._set_checklist_item_status(task_id, "PASS", "Checked")
-                elif self.checklist_runtime_status.get(task_id, ("", ""))[0] in {"PASS", "PENDING"}:
+                elif self.checklist_item_states.get(task_id) != "NA" and self.checklist_runtime_status.get(task_id, ("", ""))[0] in {"PASS", "PENDING", "NA"}:
+                    self.checklist_item_states[task_id] = "UNCHECKED"
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
 
         self._update_installation_checklist_progress()
@@ -1276,6 +1387,33 @@ class MainWindow(QtWidgets.QWidget):
         task_label = ITEM_LABELS_BY_ID.get(task_id, task_id)
         runtime_state = self.checklist_runtime_status.get(task_id, ("PENDING", "Waiting"))
         self.checklist_status_bar.setText(f"{task_label} [{runtime_state[0]}] - {runtime_state[1]}")
+
+    def _on_checklist_context_menu(self, pos: QtCore.QPoint) -> None:
+        item = self.installation_checklist_tree.itemAt(pos)
+        if item is None:
+            return
+        task_id = item.data(0, QtCore.Qt.UserRole)
+        if not isinstance(task_id, str) or not task_id:
+            return
+
+        menu = QtWidgets.QMenu(self)
+        is_na = self.checklist_item_states.get(task_id) == "NA"
+        toggle_na = menu.addAction("Mark as Not Applicable" if not is_na else "Clear Not Applicable")
+        chosen = menu.exec_(self.installation_checklist_tree.viewport().mapToGlobal(pos))
+        if chosen != toggle_na:
+            return
+
+        if is_na:
+            self.checklist_item_states[task_id] = "UNCHECKED"
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            self._set_checklist_item_status(task_id, "PENDING", "Waiting")
+        else:
+            self.checklist_item_states[task_id] = "NA"
+            item.setCheckState(0, QtCore.Qt.Unchecked)
+            self._set_checklist_item_status(task_id, "NA", "Not applicable")
+
+        self._update_installation_checklist_progress()
+        self._save_installation_checklist_state()
 
     def _on_checklist_info_field_changed(self, field_id: str) -> None:
         if self._is_loading_checklist_state:
@@ -1321,14 +1459,14 @@ class MainWindow(QtWidgets.QWidget):
     def _on_inspect_checklist_status(self, task_label: str, status: str, should_check: bool, detail: str) -> None:
         task_id = ITEM_IDS_BY_LABEL.get(task_label, task_label)
         item = self.checklist_item_by_id.get(task_id)
-        if item is None:
+        if item is None or self.checklist_item_states.get(task_id) == "NA":
             return
         self._set_checklist_item_status(task_id, status, detail)
         if should_check and status == "PASS":
+            self.checklist_item_states[task_id] = "CHECKED"
             item.setCheckState(0, QtCore.Qt.Checked)
-        elif status == "FAIL":
-            item.setCheckState(0, QtCore.Qt.Unchecked)
-        elif status == "PENDING" and item.checkState(0) != QtCore.Qt.Checked:
+        elif status in {"FAIL", "PENDING"} and item.checkState(0) != QtCore.Qt.Checked:
+            self.checklist_item_states[task_id] = "UNCHECKED"
             item.setCheckState(0, QtCore.Qt.Unchecked)
 
     def _autofill_line_edit(self, field_label: str, proposed_value: str) -> None:
@@ -1353,10 +1491,9 @@ class MainWindow(QtWidgets.QWidget):
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-
-        role_prefix = role_value[:2]
-        hostname_parts = [part for part in [client_name, role_prefix, numbering_value] if part]
-        return "-".join(hostname_parts)
+        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+            return ""
+        return f"{client_name}-{role_value[:2]}-{numbering_value}"
 
     @staticmethod
     def _to_alnum(value: str) -> str:
@@ -1397,16 +1534,24 @@ class MainWindow(QtWidgets.QWidget):
         return ""
 
     def _update_installation_checklist_progress(self) -> None:
-        total = len(self.installation_checklist_items)
-        done = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
-        self.installation_checklist_progress.setText(f"{done}/{total} completed")
+        applicable_items = [
+            item for item in self.installation_checklist_items
+            if self.checklist_item_states.get(str(item.data(0, QtCore.Qt.UserRole))) != "NA"
+        ]
+        total = len(applicable_items)
+        done = sum(item.checkState(0) == QtCore.Qt.Checked for item in applicable_items)
+        skipped = sum(self.checklist_item_states.get(str(item.data(0, QtCore.Qt.UserRole))) == "NA" for item in self.installation_checklist_items)
+        self.installation_checklist_progress.setText(f"{done}/{total} completed ({skipped} skipped)")
 
     def _save_installation_checklist_state(self) -> None:
         if self._is_loading_checklist_state:
             return
 
         checklist_state = {
-            str(item.data(0, QtCore.Qt.UserRole) or item.text(0)): item.checkState(0) == QtCore.Qt.Checked
+            str(item.data(0, QtCore.Qt.UserRole) or item.text(0)): self.checklist_item_states.get(
+                str(item.data(0, QtCore.Qt.UserRole) or item.text(0)),
+                "CHECKED" if item.checkState(0) == QtCore.Qt.Checked else "UNCHECKED",
+            )
             for item in self.installation_checklist_items
         }
         checklist_info = {
@@ -1425,8 +1570,13 @@ class MainWindow(QtWidgets.QWidget):
         try:
             for item in self.installation_checklist_items:
                 key = str(item.data(0, QtCore.Qt.UserRole) or item.text(0))
-                checked = bool(persisted_items.get(key, False))
-                item.setCheckState(0, QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+                state = str(persisted_items.get(key, "UNCHECKED")).upper()
+                if state not in {"CHECKED", "UNCHECKED", "NA"}:
+                    state = "UNCHECKED"
+                self.checklist_item_states[key] = state
+                item.setCheckState(0, QtCore.Qt.Checked if state == "CHECKED" else QtCore.Qt.Unchecked)
+                if state == "NA":
+                    self._set_checklist_item_status(key, "NA", "Not applicable")
 
             for key, widget in self.checklist_info_inputs.items():
                 self._set_checklist_info_value(widget, persisted_info.get(key, ""))
@@ -1439,6 +1589,80 @@ class MainWindow(QtWidgets.QWidget):
 
         self._apply_checklist_autofill()
 
+    def _ensure_profile_storage(self) -> None:
+        CHECKLIST_PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        if not DEFAULT_PROFILE_FILE.exists():
+            default_payload = {"items": {}, "info": {}}
+            DEFAULT_PROFILE_FILE.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
+
+    def _refresh_profile_selector(self) -> None:
+        profiles = sorted(CHECKLIST_PROFILE_DIR.glob("*.json"))
+        self.profile_selector.clear()
+        for profile in profiles:
+            self.profile_selector.addItem(profile.stem, str(profile))
+        default_path = str(DEFAULT_PROFILE_FILE)
+        idx = self.profile_selector.findData(default_path)
+        if idx >= 0:
+            self.profile_selector.setCurrentIndex(idx)
+
+    def _selected_profile_path(self) -> Path:
+        data = self.profile_selector.currentData()
+        if isinstance(data, str) and data:
+            return Path(data)
+        return DEFAULT_PROFILE_FILE
+
+    def _save_profile(self) -> None:
+        input_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID)) or "Profile"
+        profile_name = f"{input_name}-{datetime.now().strftime('%y%m%d')}.json"
+        profile_path = CHECKLIST_PROFILE_DIR / profile_name
+
+        checklist_state = {
+            str(item.data(0, QtCore.Qt.UserRole) or item.text(0)): self.checklist_item_states.get(
+                str(item.data(0, QtCore.Qt.UserRole) or item.text(0)),
+                "CHECKED" if item.checkState(0) == QtCore.Qt.Checked else "UNCHECKED",
+            )
+            for item in self.installation_checklist_items
+        }
+        checklist_info = {key: self._read_checklist_info_value(widget) for key, widget in self.checklist_info_inputs.items()}
+        save_checklist_state(profile_path, checklist_state, checklist_info)
+        self._refresh_profile_selector()
+        idx = self.profile_selector.findData(str(profile_path))
+        if idx >= 0:
+            self.profile_selector.setCurrentIndex(idx)
+        self._append(f"[INFO] Profile saved: {profile_path.name}. Use Reload profile to apply saved profile values.")
+
+    def _reload_selected_profile(self) -> None:
+        profile_path = self._selected_profile_path()
+        try:
+            persisted_items, persisted_info = load_checklist_state(profile_path)
+        except (json.JSONDecodeError, OSError):
+            self._append(f"[WARN] Could not load profile: {profile_path.name}")
+            return
+
+        self._is_loading_checklist_state = True
+        try:
+            for item in self.installation_checklist_items:
+                key = str(item.data(0, QtCore.Qt.UserRole) or item.text(0))
+                state = str(persisted_items.get(key, "UNCHECKED")).upper()
+                if state not in {"CHECKED", "UNCHECKED", "NA"}:
+                    state = "UNCHECKED"
+                self.checklist_item_states[key] = state
+                item.setCheckState(0, QtCore.Qt.Checked if state == "CHECKED" else QtCore.Qt.Unchecked)
+                if state == "NA":
+                    self._set_checklist_item_status(key, "NA", "Not applicable")
+                elif state == "UNCHECKED":
+                    self._set_checklist_item_status(key, "PENDING", "Waiting")
+
+            for key, widget in self.checklist_info_inputs.items():
+                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
+        finally:
+            self._is_loading_checklist_state = False
+
+        self._apply_checklist_autofill()
+        self._update_installation_checklist_progress()
+        self._save_installation_checklist_state()
+        self._append(f"[INFO] Profile reloaded: {profile_path.name}")
+
     def _start_new_install(self) -> None:
         self._is_loading_checklist_state = True
         try:
@@ -1446,6 +1670,7 @@ class MainWindow(QtWidgets.QWidget):
                 item.setCheckState(0, QtCore.Qt.Unchecked)
                 task_id = item.data(0, QtCore.Qt.UserRole)
                 if isinstance(task_id, str):
+                    self.checklist_item_states[task_id] = "UNCHECKED"
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
             for widget in self.checklist_info_inputs.values():
                 self._set_checklist_info_value(widget, "")
@@ -1703,7 +1928,24 @@ class MainWindow(QtWidgets.QWidget):
 
         return selected_steps, app_steps
 
+    def _hostname_requirements_met(self) -> bool:
+        client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
+        role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
+        numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
+        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+            return False
+        expected = f"{client_name}-{role_value[:2]}-{numbering_value}"
+        return self.rename_input.text().strip() == expected
+
     def _run_apply(self) -> None:
+        if not self._hostname_requirements_met():
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Missing hostname fields",
+                "Apply is blocked until Client name, Computer role (2+ chars), and Numbering00 are set. Hostname is generated automatically and cannot be overridden.",
+            )
+            return
+
         plan = self._build_apply_execution_plan()
         if plan is None:
             return
