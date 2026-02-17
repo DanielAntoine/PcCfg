@@ -96,7 +96,7 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Redesign the full checklist/table layout spacing so columns align cleanly, content does not drift to the right, and row/task spacing is consistently sized across the UI.
 - [x] Constrain long checklist text to wrap to a maximum of 2 lines; use the second line only when needed so single-line content does not reserve extra blank row height.
 - [x] Replace plain checklist status text with status chips (`PASS`, `FAIL`, `PENDING`, `RUNNING`) and apply consistent color semantics per status across the UI.
-- [x] Generate the hostname automatically using `{ClientNamePascal}-{Role2LUpper}-{numbering00}` and remove manual computer-name input.
+- [x] Generate the hostname automatically using `{ClientNamePascal}-{Role4LUpper}-{numbering00}` and remove manual computer-name input.
 - [x] Detect whether a Wi-Fi adapter is present during Inspect, and update the matching checklist item automatically when detection passes.
 - [x] Detect whether Wi-Fi is connected during Inspect (connected/disconnected + SSID/signal when available), and update the matching checklist item automatically when detection passes.
 - [x] Detect internet reachability during Inspect (for example via DNS/ping test), and update the matching checklist item automatically when detection passes.
@@ -108,7 +108,7 @@ Install-Package <name> -Force -Confirm:$false
   - Apply profile changes only after save + reload.
 - [x] Enforce computer name/hostname format with all 3 required elements:
   - `ClientName`, `Role`, and `numbering00`.
-  - Pattern remains `{ClientNamePascal}-{Role2LUpper}-{numbering00}`.
+  - Pattern remains `{ClientNamePascal}-{Role4LUpper}-{numbering00}`.
   - Block **Apply** if any required element is missing.
   - No manual override of generated name.
 - [x] Add SSH setup in app:
@@ -137,3 +137,7 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Add Inspect output (informational only) to log console and report output ,CPU (short value) ,Motherboard (short value), BIOS version (short value), IP (IPv4 + IPv6 across all adapters)
 - [x] After Run, show "restart may be needed" add a Dialog buttons: `Restart now` and `Restart later`.
 - [x] Move all "info " input needed by the user to a form under " manual install" and remove culumn info from install pc checklist, update checlist when field is fill
+- [x] Move "Evidence / Photos" to the last checklist section.
+- [x] Remove "Validation: Device Manager = 0 unknown devices" from Setup information.
+- [x] Show Setup information inputs under each label (stacked vertically).
+- [x] Improve Google Chrome inspect detection with fallback checks when `winget list` cannot be queried.

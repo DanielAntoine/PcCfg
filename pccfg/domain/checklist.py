@@ -8,18 +8,24 @@ CHECKLIST_LOG_FILE = Path(__file__).resolve().parents[2] / "installation_checkli
 CHECKLIST_PROFILE_DIR = Path(__file__).resolve().parents[2] / "profiles"
 DEFAULT_PROFILE_FILE = CHECKLIST_PROFILE_DIR / "default-profile.json"
 CHECKLIST_TASK_MAX_LEN = 52
+COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
+    "Editor",
+    "Colorimetrie",
+    "Server",
+    "Datawringling",
+)
 
 CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("client_name", "Client name", "text"),
     ChecklistField("computer_role", "Computer role", "text"),
     ChecklistField("numbering", "Numbering00 (e.g., 01, 02, 03)", "numbering"),
-    ChecklistField("hostname", "Hostname/User: {ClientName6PadX}-{Role2LUpper}-{numbering00}", "text"),
+
+    ChecklistField("hostname", "Hostname/User: {ClientNamePascal}-{Role4LUpper}-{numbering00}", "text"),
     ChecklistField("inventory_id", "Inventory ID", "text"),
     ChecklistField("technician", "Technician", "text"),
     ChecklistField("date", "Date", "date"),
     ChecklistField("installed_cards", "Installed cards: BMD / 10GbE / others", "text"),
     ChecklistField("file_name", "File name: YYYYMMDD_InventoryID_Step_{enumeration000}.jpg", "text"),
-    ChecklistField("device_manager_validation", "Validation: Device Manager = 0 unknown devices", "text"),
     ChecklistField("screenconnect_id", "Record ScreenConnect ID", "text"),
 )
 
@@ -42,28 +48,21 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         ),
     ),
     ChecklistSection(
-        "evidence_photos",
-        "1) Evidence / Photos",
-        (
-            ChecklistItem("attach_photos", "Attach photos to the client inventory record or the ticket"),
-        ),
-    ),
-    ChecklistSection(
         "physical_inspection",
-        "2) Physical inspection",
+        "1) Physical inspection",
         (
             ChecklistItem("open_case", "Open the case + take UNBOX photos"),
             ChecklistItem("verify_components", "Verify components against invoice (RAM/SSD/GPU/cards)"),
             ChecklistItem("check_cables", "Check cables (nothing in fans / nothing loose)"),
         ),
     ),
-    ChecklistSection("initial_boot", "3) Initial boot", (
+    ChecklistSection("initial_boot", "2) Initial boot", (
         ChecklistItem("start_pc", "Start the PC"),
         ChecklistItem("fans_spin", "Check that all fans spin (CPU/GPU/case)"),
     )),
     ChecklistSection(
         "bios_uefi",
-        "4) BIOS / UEFI",
+        "3) BIOS / UEFI",
         (
             ChecklistItem("update_bios", "Update BIOS (version before/after)"),
             ChecklistItem("enable_4g", "Enable 4G Decoding"),
@@ -75,9 +74,10 @@ SECTIONS: tuple[ChecklistSection, ...] = (
     ),
     ChecklistSection(
         "windows_update_drivers",
-        "5) Windows Update + Drivers",
+        "4) Windows Update + Drivers",
         (
-            ChecklistItem("rename_pc", "Rename the PC ({ClientName6PadX}-{Role2LUpper}-{numbering00})"),
+
+            ChecklistItem("rename_pc", "Rename the PC ({ClientNamePascal}-{Role4LUpper}-{numbering00})"),
             ChecklistItem("windows_update", 'Run Windows Update until "Up to date"'),
             ChecklistItem("install_chipset", "Install chipset drivers"),
             ChecklistItem("install_network", "Install network drivers (LAN/10GbE/Wi-Fi)"),
@@ -88,14 +88,14 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("devmgr_validation", "Validation: Device Manager = 0 unknown devices"),
         ),
     ),
-    ChecklistSection("gpu_nvidia", "6) GPU NVIDIA", (
+    ChecklistSection("gpu_nvidia", "5) GPU NVIDIA", (
         ChecklistItem("nvidia_perf", "NVIDIA Control Panel > Power management mode > Prefer maximum performance"),
     )),
-    ChecklistSection("cleanup", "7) Cleanup (manual)", (
+    ChecklistSection("cleanup", "6) Cleanup (manual)", (
         ChecklistItem("remove_bloat", "Remove bloatware"),
         ChecklistItem("startup_apps", "Check startup apps (Task Manager > Startup)"),
     )),
-    ChecklistSection("power_sleep", "8) Power / Sleep / Fast Startup", (
+    ChecklistSection("power_sleep", "7) Power / Sleep / Fast Startup", (
         ChecklistItem("power_perf", "Power plan: Performance (High performance)"),
         ChecklistItem("sleep_never", "Sleep: Never (AC)"),
         ChecklistItem("hibernate_off", "Hibernate: Off"),
@@ -103,19 +103,19 @@ SECTIONS: tuple[ChecklistSection, ...] = (
         ChecklistItem("monitor_timeout", "Monitor timeout: 30 min"),
         ChecklistItem("disable_fast_startup", "Disable Fast Startup"),
     )),
-    ChecklistSection("game_bar", "9) Game Bar / Game DVR", (
+    ChecklistSection("game_bar", "8) Game Bar / Game DVR", (
         ChecklistItem("disable_game_bar", "Disable Game Bar / Game DVR"),
     )),
-    ChecklistSection("performance_options", "10) Performance options", (
+    ChecklistSection("performance_options", "9) Performance options", (
         ChecklistItem("best_perf", "Enable Best performance + keep thumbnails"),
     )),
-    ChecklistSection("notifications", "11) Notifications", (
+    ChecklistSection("notifications", "10) Notifications", (
         ChecklistItem("disable_notifications", "Disable Windows notifications (current user)"),
     )),
-    ChecklistSection("disks", "12) Disks", (ChecklistItem("disks_visible", "Ensure all disks are visible"),)),
+    ChecklistSection("disks", "11) Disks", (ChecklistItem("disks_visible", "Ensure all disks are visible"),)),
     ChecklistSection(
         "network_support",
-        "13) Network & support",
+        "12) Network & support",
         (
             ChecklistItem("test_usb", "Test USB ports"),
             ChecklistItem("test_wifi", "Test Wi-Fi"),
@@ -128,7 +128,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
     ),
     ChecklistSection(
         "software",
-        "14) Software",
+        "13) Software",
         (
             ChecklistItem("software_google_chrome", "Google Chrome"),
             ChecklistItem("software_shotcut", "Shotcut"),
@@ -158,18 +158,25 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("software_screenconnect", "ScreenConnect"),
         ),
     ),
-    ChecklistSection("capture_validation", "15) Capture card validation", (
+    ChecklistSection("capture_validation", "14) Capture card validation", (
         ChecklistItem("test_io_media_express", "Test I/O via Blackmagic Media Express"),
         ChecklistItem("test_vmix", "Test in vMix (if required)"),
         ChecklistItem("test_streamdeck", "Test StreamDeck in vMix (if required)"),
     )),
-    ChecklistSection("repack", "16) Repack / InstaPak", (
+    ChecklistSection("repack", "15) Repack / InstaPak", (
         ChecklistItem("pack_before", "Photo PACK_BEFORE_001"),
         ChecklistItem("insert_instapak", "Insert InstaPak, close case, wait for foam expansion"),
         ChecklistItem("pack_after", "Photo PACK_AFTER_001"),
         ChecklistItem("remove_verify", "Remove InstaPak to verify the client can remove it"),
         ChecklistItem("reinsert_final", "Reinsert InstaPak + close + final packaging"),
     )),
+    ChecklistSection(
+        "evidence_photos",
+        "16) Evidence / Photos",
+        (
+            ChecklistItem("attach_photos", "Attach photos to the client inventory record or the ticket"),
+        ),
+    ),
 )
 
 ITEM_LABELS_BY_ID = {item.item_id: item.label for section in SECTIONS for item in section.items}

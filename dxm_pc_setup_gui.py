@@ -36,6 +36,7 @@ from pccfg.domain.checklist import (
     CHECKLIST_LOG_FILE,
     CHECKLIST_PROFILE_DIR,
     DEFAULT_PROFILE_FILE,
+    COMPUTER_ROLE_OPTIONS,
     CHECKLIST_TASK_MAX_LEN,
     FIELD_IDS_BY_LABEL,
     FIELDS_BY_ID,
@@ -62,7 +63,6 @@ CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
     INVENTORY_ID_FIELD_ID: INVENTORY_ID_FIELD_ID,
     "technician": "technician",
     "installed_cards": "installed_cards",
-    "device_manager_validation": "devmgr_validation",
     "screenconnect_id": "record_scid",
 }
 
@@ -95,6 +95,7 @@ SOFTWARE_INSPECT_ITEMS: tuple[tuple[str, str, str], ...] = (
 )
 SOFTWARE_DEFAULT_NA_ITEM_IDS = {item_id for item_id, _label, _winget in SOFTWARE_INSPECT_ITEMS}
 SOFTWARE_DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
+COMPUTER_ROLE_FIELD_CHOICES = ("", *COMPUTER_ROLE_OPTIONS)
 
 COMMAND_CANCEL_EXIT_CODE = -9
 COMMAND_TIMEOUT_EXIT_CODE = -124
@@ -513,6 +514,23 @@ def detect_software_installation(winget_id: str, cancel_requested: Callable[[], 
         cancel_requested=cancel_requested,
     )
     if rc != 0:
+        if winget_id == "Google.Chrome":
+            chrome_paths = [
+                "${env:ProgramFiles}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe",
+                "${env:LocalAppData}\\Google\\Chrome\\Application\\chrome.exe",
+            ]
+            fallback_command = (
+                "$paths=@(" + ",".join(f"'{path}'" for path in chrome_paths) + "); "
+                "if (($paths | Where-Object { Test-Path $_ } | Select-Object -First 1) -or (Get-Command chrome -ErrorAction SilentlyContinue)) { 'Installed' }"
+            )
+            fallback_rc, fallback_output = run_command_with_options(
+                ["powershell", "-NoProfile", "-Command", fallback_command],
+                timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+                cancel_requested=cancel_requested,
+            )
+            if fallback_rc == 0 and compact_single_line(fallback_output):
+                return True, "Installed (fallback detection)"
         return None, "Unable to query"
 
     lowered = output.lower()
@@ -1429,7 +1447,7 @@ class MainWindow(QtWidgets.QWidget):
         info_font.setBold(True)
         info_title.setFont(info_font)
         self.manual_layout.addWidget(info_title)
-        self.manual_info_form = QtWidgets.QFormLayout()
+        self.manual_info_form = QtWidgets.QVBoxLayout()
         self.manual_layout.addLayout(self.manual_info_form)
         self.manual_layout.addStretch(1)
 
@@ -1520,8 +1538,11 @@ class MainWindow(QtWidgets.QWidget):
 
         info_fields = [field for field in CHECKLIST_FIELDS if field.field_id not in HIDDEN_CHECKLIST_FIELD_IDS]
         for field in info_fields:
+            field_label = QtWidgets.QLabel(f"{field.label}:")
+            field_label.setObjectName("setupInfoLabel")
             value_input = self._create_checklist_info_input(field)
-            self.manual_info_form.addRow(f"{field.label}:", value_input)
+            self.manual_info_form.addWidget(field_label)
+            self.manual_info_form.addWidget(value_input)
             self.checklist_info_inputs[field.field_id] = value_input
 
         self.installation_checklist_tree.itemChanged.connect(self._on_installation_checklist_item_changed)
@@ -1669,6 +1690,14 @@ class MainWindow(QtWidgets.QWidget):
         self._save_installation_checklist_state()
 
     def _create_checklist_info_input(self, field) -> QtWidgets.QWidget:
+        if field.field_id == COMPUTER_ROLE_FIELD_ID:
+            value_input = QtWidgets.QComboBox()
+            value_input.addItems(COMPUTER_ROLE_FIELD_CHOICES)
+            value_input.currentTextChanged.connect(
+                lambda _value, field_id=field.field_id: self._on_checklist_info_field_changed(field_id)
+            )
+            return value_input
+
         if field.field_type == "date":
             value_input = QtWidgets.QDateEdit()
             value_input.setDisplayFormat("yyyy-MM-dd")
@@ -1777,9 +1806,11 @@ class MainWindow(QtWidgets.QWidget):
         client_hostname = (client_name[:6]).ljust(6, "X")
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return ""
-        return f"{client_hostname}-{role_value[:2]}-{numbering_value}"
+
+        return f"{client_name}-{role_value[:4]}-{numbering_value}"
+
 
     @staticmethod
     def _to_alnum(value: str) -> str:
@@ -1862,7 +1893,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(key, "NA", "Not applicable")
 
             for key, widget in self.checklist_info_inputs.items():
-                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
+                self._set_checklist_info_value(key, widget, persisted_info.get(key, ""))
         finally:
             self._is_loading_checklist_state = False
 
@@ -1937,7 +1968,7 @@ class MainWindow(QtWidgets.QWidget):
                     self._set_checklist_item_status(key, "PENDING", "Waiting")
 
             for key, widget in self.checklist_info_inputs.items():
-                self._set_checklist_info_value(widget, persisted_info.get(key, ""))
+                self._set_checklist_info_value(key, widget, persisted_info.get(key, ""))
         finally:
             self._is_loading_checklist_state = False
 
@@ -1966,8 +1997,8 @@ class MainWindow(QtWidgets.QWidget):
                 if isinstance(task_id, str):
                     self.checklist_item_states[task_id] = "UNCHECKED"
                     self._set_checklist_item_status(task_id, "PENDING", "Waiting")
-            for widget in self.checklist_info_inputs.values():
-                self._set_checklist_info_value(widget, "")
+            for field_id, widget in self.checklist_info_inputs.items():
+                self._set_checklist_info_value(field_id, widget, "")
             self._apply_default_software_states()
         finally:
             self._is_loading_checklist_state = False
@@ -2098,12 +2129,14 @@ class MainWindow(QtWidgets.QWidget):
             return widget.date().toString("yyyy-MM-dd")
         return ""
 
-    def _set_checklist_info_value(self, widget: QtWidgets.QWidget, value: str) -> None:
+    def _set_checklist_info_value(self, field_id: str, widget: QtWidgets.QWidget, value: str) -> None:
         if isinstance(widget, QtWidgets.QLineEdit):
             widget.setText(value)
             return
         if isinstance(widget, QtWidgets.QComboBox):
-            normalized_value = self._normalize_numbering_value(value)
+            normalized_value = value.strip()
+            if field_id == NUMBERING_FIELD_ID:
+                normalized_value = self._normalize_numbering_value(value)
             index = widget.findText(normalized_value)
             widget.setCurrentIndex(index if index >= 0 else 0)
             return
@@ -2270,9 +2303,9 @@ class MainWindow(QtWidgets.QWidget):
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return False
-        expected = f"{client_name}-{role_value[:2]}-{numbering_value}"
+        expected = f"{client_name}-{role_value[:4]}-{numbering_value}"
         return self.rename_input.text().strip() == expected
 
     def _run_apply(self) -> None:
@@ -2280,7 +2313,7 @@ class MainWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Missing hostname fields",
-                "Rename computer is blocked until Client name, Computer role (2+ chars), and Numbering00 are set. Disable Rename computer to run the other tasks.",
+                "Rename computer is blocked until Client name, Computer role (4+ chars), and Numbering00 are set. Disable Rename computer to run the other tasks.",
             )
             return
 
