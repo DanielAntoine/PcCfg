@@ -33,7 +33,7 @@ COMPUTER_ROLE_OPTIONS: tuple[str, ...] = (
     "Sound",
     "VFXX",
     "Engineer",
-    "Matt painthing"
+    "Matte Painting"
 )
 
 
