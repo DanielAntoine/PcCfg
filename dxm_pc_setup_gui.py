@@ -1853,9 +1853,9 @@ class MainWindow(QtWidgets.QWidget):
             self._set_checklist_item_status(task_id, "PASS", "Filled from setup information")
             return
 
-        if item.checkState(0) != QtCore.Qt.Checked:
-            self.checklist_item_states[task_id] = "UNCHECKED"
-            self._set_checklist_item_status(task_id, "PENDING", "Waiting for setup information")
+        self.checklist_item_states[task_id] = "UNCHECKED"
+        item.setCheckState(0, QtCore.Qt.Unchecked)
+        self._set_checklist_item_status(task_id, "PENDING", "Waiting for setup information")
 
     def _apply_checklist_autofill(self) -> None:
         hostname_text = self._build_hostname_value()
