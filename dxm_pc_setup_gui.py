@@ -1795,9 +1795,9 @@ class MainWindow(QtWidgets.QWidget):
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return ""
-        return f"{client_name}-{role_value[:2]}-{numbering_value}"
+        return f"{client_name}-{role_value[:4]}-{numbering_value}"
 
     @staticmethod
     def _to_alnum(value: str) -> str:
@@ -2288,9 +2288,9 @@ class MainWindow(QtWidgets.QWidget):
         client_name = self._to_pascal_case_alnum(self._get_checklist_info_text(CLIENT_NAME_FIELD_ID))
         role_value = self._to_alnum(self._get_checklist_info_text(COMPUTER_ROLE_FIELD_ID)).upper()
         numbering_value = self._normalize_numbering_value(self._get_checklist_info_text(NUMBERING_FIELD_ID))
-        if not client_name or len(role_value) < 2 or not re.fullmatch(r"\d{2}", numbering_value):
+        if not client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
             return False
-        expected = f"{client_name}-{role_value[:2]}-{numbering_value}"
+        expected = f"{client_name}-{role_value[:4]}-{numbering_value}"
         return self.rename_input.text().strip() == expected
 
     def _run_apply(self) -> None:
@@ -2298,7 +2298,7 @@ class MainWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Missing hostname fields",
-                "Rename computer is blocked until Client name, Computer role (2+ chars), and Numbering00 are set. Disable Rename computer to run the other tasks.",
+                "Rename computer is blocked until Client name, Computer role (4+ chars), and Numbering00 are set. Disable Rename computer to run the other tasks.",
             )
             return
 
