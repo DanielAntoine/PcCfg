@@ -30,7 +30,7 @@ python dxm_pc_setup_gui.py
 Use PyInstaller with the included `app.ico` file:
 
 ```powershell
-pyinstaller --noconfirm --onefile --console --name PcCfg-v0.1.1ForTestOnly --icon Icon/PCSetup.ico --add-data "style;style" --add-data "profiles;profiles" dxm_pc_setup_gui.py
+pyinstaller --noconfirm --onefile --console --name PcCfg-v0.1.2-ForTestOnly --icon Icon/PCSetup.ico --add-data "style;style" --add-data "profiles;profiles" dxm_pc_setup_gui.py
 ```
 
 
