@@ -70,6 +70,7 @@ from pccfg.services.system_probes import (
     detect_wifi_adapter,
     detect_wifi_connection,
 )
+from pccfg.services.winget import is_noop_install_success
 
 CLIENT_NAME_FIELD_ID = "client_name"
 COMPUTER_ROLE_FIELD_ID = "computer_role"
@@ -1244,10 +1245,11 @@ class SetupWorker(QtCore.QObject):
                     self.step_finished.emit(step_name, False)
                     self.checklist_status.emit(step.label, "FAIL", False, "Apply: winget install timeout")
                 else:
-                    status = "OK" if rc == 0 else f"FAIL (exit {rc})"
+                    install_ok = rc == 0 or is_noop_install_success(out)
+                    status = "OK" if install_ok else f"FAIL (exit {rc})"
                     self.log_line.emit(f"    -> {status}")
-                    self.step_finished.emit(step_name, rc == 0)
-                    self.checklist_status.emit(step.label, "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
+                    self.step_finished.emit(step_name, install_ok)
+                    self.checklist_status.emit(step.label, "PASS" if install_ok else "FAIL", install_ok, "Apply: winget install")
                 if out:
                     self.log_line.emit(f"    {out}")
                 self.log_line.emit("")
