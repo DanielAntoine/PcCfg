@@ -29,7 +29,3 @@ def build_hostname_value(client_name: str, computer_role: str, numbering: str) -
     if not normalized_client_name or len(role_value) < 4 or not re.fullmatch(r"\d{2}", numbering_value):
         return ""
     return f"{client_hostname}-{role_value[:4]}-{numbering_value}"
-
-
-def hostname_requirements_met(client_name: str, computer_role: str, numbering: str) -> bool:
-    return bool(build_hostname_value(client_name, computer_role, numbering))

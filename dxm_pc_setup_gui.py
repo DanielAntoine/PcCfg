@@ -43,8 +43,6 @@ from pccfg.domain.checklist import (
     CHECKLIST_TASK_MAX_LEN,
     TECHNICIAN_DEFAULT_OPTIONS,
     FIELD_IDS_BY_LABEL,
-    FIELDS_BY_ID,
-    FIELDS_BY_LABEL,
     ITEM_IDS_BY_LABEL,
     ITEM_LABELS_BY_ID,
     SECTIONS,
