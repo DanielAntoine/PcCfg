@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Callable
 
 from pccfg.domain.models import InstallApp
 from pccfg.services.command_runner import DEFAULT_INSPECT_TIMEOUT_SEC, run_command_with_options
+
+
+@dataclass(frozen=True)
+class SoftwareDetectionSnapshot:
+    winget_ids: frozenset[str]
+    registry_rows: tuple[dict[str, str], ...]
+    executable_names: frozenset[str]
+    shortcut_names: frozenset[str]
 
 
 def compact_single_line(output: str) -> str:
@@ -211,18 +220,66 @@ def _match_winget_id_from_output(raw_output: str, winget_id: str) -> bool:
     return False
 
 
-def _detect_from_registry(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    display_names = [name.strip().lower() for name in app.detect_display_names if name.strip()]
-    if not display_names:
-        display_names = [app.label.strip().lower()]
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
 
-    publishers = [name.strip().lower() for name in app.detect_publishers if name.strip()]
 
+def _pattern_matches_text(pattern: str, text: str) -> bool:
+    normalized_pattern = _normalize_text(pattern)
+    normalized_text = _normalize_text(text)
+    if not normalized_pattern or not normalized_text:
+        return False
+    if normalized_text == normalized_pattern:
+        return True
+    escaped = re.escape(normalized_pattern)
+    return re.search(rf"(?:^|\s){escaped}(?:\s|$)", normalized_text) is not None
+
+
+def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
+    rc, output = run_command_with_options(
+        ["winget", "list", "--accept-source-agreements", "--output", "json"],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc == 0:
+        rows = parse_json_payload(output)
+        ids = {
+            str(row.get("Id") or row.get("PackageIdentifier") or "").strip().lower()
+            for row in rows
+            if str(row.get("Id") or row.get("PackageIdentifier") or "").strip()
+        }
+        return frozenset(ids), bool(rows)
+
+    text_rc, text_out = run_command_with_options(
+        ["winget", "list", "--accept-source-agreements"],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if text_rc != 0:
+        return frozenset(), False
+
+    ids: set[str] = set()
+    for line in text_out.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("-"):
+            continue
+        if stripped.lower().startswith("name") and "id" in stripped.lower():
+            continue
+        columns = re.split(r"\s{2,}", stripped)
+        if len(columns) < 2:
+            continue
+        candidate_id = columns[1].strip().lower()
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", candidate_id):
+            ids.add(candidate_id)
+    return frozenset(ids), bool(ids)
+
+
+def _collect_registry_rows(cancel_requested: Callable[[], bool] | None = None) -> tuple[tuple[dict[str, str], ...], bool]:
     probe_command = (
-        "$paths = @(" 
-        "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," 
-        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," 
-        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'" 
+        "$paths = @("
+        "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'"
         "); "
         "$rows = foreach ($path in $paths) { "
         "Get-ItemProperty -Path $path -ErrorAction SilentlyContinue | "
@@ -237,65 +294,166 @@ def _detect_from_registry(app: InstallApp, cancel_requested: Callable[[], bool] 
         cancel_requested=cancel_requested,
     )
     if rc != 0:
+        return (), False
+    rows = parse_json_payload(output)
+    return tuple(rows), bool(rows)
+
+
+def _collect_executable_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
+    command = (
+        "$cmds = Get-Command -CommandType Application -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty Name -Unique; "
+        "$cmds | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return frozenset(), False
+
+    names = parse_json_payload(output)
+    if names:
+        extracted = {
+            _normalize_text(str(row.get("Name") or ""))
+            for row in names
+            if _normalize_text(str(row.get("Name") or ""))
+        }
+        if extracted:
+            return frozenset(extracted), True
+
+    raw = output.strip()
+    if not raw:
+        return frozenset(), False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = []
+    if isinstance(payload, str):
+        return frozenset({_normalize_text(payload)}), True
+    if isinstance(payload, list):
+        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
+        return frozenset(extracted), bool(extracted)
+    return frozenset(), False
+
+
+def _collect_shortcut_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
+    command = (
+        "$roots = @($env:ProgramData + '\\Microsoft\\Windows\\Start Menu\\Programs',"
+        "$env:APPDATA + '\\Microsoft\\Windows\\Start Menu\\Programs');"
+        "$items = foreach ($root in $roots) {"
+        "if (Test-Path $root) {Get-ChildItem -Path $root -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty BaseName}};"
+        "$items | Select-Object -Unique | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return frozenset(), False
+
+    raw = output.strip()
+    if not raw:
+        return frozenset(), False
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return frozenset(), False
+    if isinstance(payload, str):
+        return frozenset({_normalize_text(payload)}), True
+    if isinstance(payload, list):
+        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
+        return frozenset(extracted), bool(extracted)
+    return frozenset(), False
+
+
+def collect_software_detection_snapshot(
+    cancel_requested: Callable[[], bool] | None = None,
+) -> tuple[SoftwareDetectionSnapshot | None, str]:
+    winget_ids, winget_ok = _collect_winget_ids(cancel_requested)
+    registry_rows, registry_ok = _collect_registry_rows(cancel_requested)
+    executable_names, executable_ok = _collect_executable_names(cancel_requested)
+    shortcut_names, shortcut_ok = _collect_shortcut_names(cancel_requested)
+
+    if not any((winget_ok, registry_ok, executable_ok, shortcut_ok)):
         return None, "Unable to query"
 
-    rows = parse_json_payload(output)
-    if not rows:
-        return False, "Not installed"
+    snapshot = SoftwareDetectionSnapshot(
+        winget_ids=winget_ids,
+        registry_rows=registry_rows,
+        executable_names=executable_names,
+        shortcut_names=shortcut_names,
+    )
+    return snapshot, "OK"
+
+
+def _detect_from_registry_rows(app: InstallApp, rows: tuple[dict[str, str], ...]) -> tuple[bool, str]:
+    display_names = [name.strip() for name in app.detect_display_names if name.strip()]
+    if not display_names:
+        display_names = [app.label.strip()]
+    publishers = [name.strip().lower() for name in app.detect_publishers if name.strip()]
 
     for row in rows:
         display_name = str(row.get("DisplayName") or "").strip()
         publisher = str(row.get("Publisher") or "").strip()
         scope = str(row.get("Scope") or "registry").strip()
-        normalized_display = display_name.lower()
-        normalized_publisher = publisher.lower()
 
-        name_match = any(pattern in normalized_display for pattern in display_names)
-        publisher_match = bool(publishers) and any(pattern in normalized_publisher for pattern in publishers)
-        if name_match or publisher_match:
-            return True, f"Installed (registry {scope}: {display_name})"
+        name_match = any(_pattern_matches_text(pattern, display_name) for pattern in display_names)
+        if not name_match:
+            continue
+
+        publisher_match = bool(publishers) and any(p in publisher.lower() for p in publishers)
+        match_type = "name+publisher" if publisher_match else "name"
+        return True, f"Installed (registry {match_type} {scope}: {display_name})"
 
     return False, "Not installed"
 
 
-def detect_software_installation(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    winget_command = [
-        "winget",
-        "list",
-        "--id",
-        app.winget_id,
-        "--exact",
-        "--accept-source-agreements",
-        "--output",
-        "json",
-    ]
-    winget_rc, winget_output = run_command_with_options(
-        winget_command,
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
+def _detect_from_exec_and_shortcuts(app: InstallApp, snapshot: SoftwareDetectionSnapshot) -> tuple[bool, str]:
+    executable_patterns = [_normalize_text(name) for name in app.detect_executables if _normalize_text(name)]
+    shortcut_patterns = [_normalize_text(name) for name in app.detect_shortcuts if _normalize_text(name)]
 
-    if winget_rc == 0 and _match_winget_id_from_output(winget_output, app.winget_id):
-        return True, "Installed (winget)"
+    executable_match = any(pattern in snapshot.executable_names for pattern in executable_patterns)
+    shortcut_match = any(pattern in snapshot.shortcut_names for pattern in shortcut_patterns)
+    if executable_match and shortcut_match:
+        return True, "Installed (path+shortcut)"
+    if executable_match:
+        return False, "Partial evidence: executable on PATH only"
+    if shortcut_match:
+        return False, "Partial evidence: Start Menu shortcut only"
+    return False, "Not installed"
 
-    if winget_rc not in {0, 1}:
-        text_rc, text_output = run_command_with_options(
-            ["winget", "list", "--id", app.winget_id, "--exact", "--accept-source-agreements"],
-            timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-            cancel_requested=cancel_requested,
-        )
-        if text_rc == 0 and _match_winget_id_from_output(text_output, app.winget_id):
-            return True, "Installed (winget)"
-        if text_rc not in {0, 1}:
-            registry_ok, registry_detail = _detect_from_registry(app, cancel_requested)
-            if registry_ok is None:
-                return None, "Unable to query"
-            return registry_ok, registry_detail
 
-    registry_ok, registry_detail = _detect_from_registry(app, cancel_requested)
-    if registry_ok is None:
+def _detect_from_registry(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    rows, ok = _collect_registry_rows(cancel_requested)
+    if not ok:
         return None, "Unable to query"
-    return registry_ok, registry_detail
+    return _detect_from_registry_rows(app, rows)
+
+
+def detect_software_installation_from_snapshot(
+    app: InstallApp,
+    snapshot: SoftwareDetectionSnapshot,
+) -> tuple[bool | None, str]:
+    if app.winget_id.strip().lower() in snapshot.winget_ids:
+        return True, "Installed (winget snapshot)"
+
+    registry_ok, registry_detail = _detect_from_registry_rows(app, snapshot.registry_rows)
+    if registry_ok:
+        return True, registry_detail
+
+    evidence_ok, evidence_detail = _detect_from_exec_and_shortcuts(app, snapshot)
+    return evidence_ok, evidence_detail
+
+
+def detect_software_installation(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
+    snapshot, detail = collect_software_detection_snapshot(cancel_requested)
+    if snapshot is None:
+        return None, detail
+    return detect_software_installation_from_snapshot(app, snapshot)
 
 
 def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
@@ -304,10 +462,11 @@ def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | Non
         "-NoProfile",
         "-Command",
         "$paths = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');"
+        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');"
         "Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | "
         "Where-Object { $_.DisplayName -match 'ScreenConnect|ConnectWise Control' } | "
-        "Select-Object -First 1 -ExpandProperty DisplayName",
+        "Select-Object -First 1 @{N='Scope';E={$_.PSPath}}, DisplayName | ConvertTo-Json -Compress",
     ]
     rc, output = run_command_with_options(
         command,
@@ -317,7 +476,10 @@ def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | Non
     if rc != 0:
         return None, "Unable to query"
 
-    detected = compact_single_line(output)
-    if detected:
-        return True, detected
+    rows = parse_json_payload(output)
+    if rows:
+        row = rows[0]
+        scope = str(row.get("Scope") or "registry").strip()
+        name = str(row.get("DisplayName") or "ScreenConnect").strip()
+        return True, f"Installed ({scope}: {name})"
     return False, "Not installed"
