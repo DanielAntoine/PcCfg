@@ -1242,12 +1242,12 @@ class SetupWorker(QtCore.QObject):
                 if rc == COMMAND_TIMEOUT_EXIT_CODE:
                     self.log_line.emit(f"    -> FAIL (timeout after {DEFAULT_INSTALL_TIMEOUT_SEC}s)")
                     self.step_finished.emit(step_name, False)
+                    self.checklist_status.emit(step.label, "FAIL", False, "Apply: winget install timeout")
                 else:
                     status = "OK" if rc == 0 else f"FAIL (exit {rc})"
                     self.log_line.emit(f"    -> {status}")
                     self.step_finished.emit(step_name, rc == 0)
-                if step.label == "Parsec":
-                    self.checklist_status.emit("Parsec", "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
+                    self.checklist_status.emit(step.label, "PASS" if rc == 0 else "FAIL", rc == 0, "Apply: winget install")
                 if out:
                     self.log_line.emit(f"    {out}")
                 self.log_line.emit("")
