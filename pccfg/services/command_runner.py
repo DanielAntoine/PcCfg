@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import threading
+from queue import Empty, Queue
 from datetime import datetime
 from typing import Callable, overload
 
@@ -32,6 +34,7 @@ def run_command_with_options(
     *,
     timeout_sec: float | None = None,
     cancel_requested: Callable[[], bool] | None = None,
+    on_output: Callable[[str], None] | None = None,
     poll_interval_sec: float = 0.2,
 ) -> tuple[int, str]:
     """Run command with optional timeout/cancellation support."""
@@ -46,30 +49,62 @@ def run_command_with_options(
         errors="ignore",
     )
 
+    output_lines: list[str] = []
+    output_queue: Queue[str | None] = Queue()
+
+    def enqueue_output() -> None:
+        if proc.stdout is None:
+            output_queue.put(None)
+            return
+        for line in proc.stdout:
+            output_queue.put(line)
+        output_queue.put(None)
+
+    stdout_thread = threading.Thread(target=enqueue_output, daemon=True)
+    stdout_thread.start()
+
     deadline = None if timeout_sec is None else datetime.now().timestamp() + timeout_sec
+    stream_finished = False
     while True:
+        while True:
+            try:
+                line = output_queue.get_nowait()
+            except Empty:
+                break
+
+            if line is None:
+                stream_finished = True
+                continue
+
+            stripped = line.rstrip("\r\n")
+            output_lines.append(stripped)
+            if on_output:
+                on_output(stripped)
+
         if cancel_requested and cancel_requested():
             proc.terminate()
             try:
-                stdout, _ = proc.communicate(timeout=5)
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                stdout, _ = proc.communicate()
-            return COMMAND_CANCEL_EXIT_CODE, stdout.strip()
+                proc.wait()
+            stdout_thread.join(timeout=1)
+            return COMMAND_CANCEL_EXIT_CODE, "\n".join(output_lines).strip()
 
         if deadline is not None and datetime.now().timestamp() >= deadline:
             proc.terminate()
             try:
-                stdout, _ = proc.communicate(timeout=5)
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                stdout, _ = proc.communicate()
-            return COMMAND_TIMEOUT_EXIT_CODE, stdout.strip()
+                proc.wait()
+            stdout_thread.join(timeout=1)
+            return COMMAND_TIMEOUT_EXIT_CODE, "\n".join(output_lines).strip()
 
         rc = proc.poll()
-        if rc is not None:
-            stdout, _ = proc.communicate()
-            return rc, stdout.strip()
+        if rc is not None and stream_finished:
+            stdout_thread.join(timeout=1)
+            return rc, "\n".join(output_lines).strip()
 
         QtCore.QThread.msleep(max(1, int(poll_interval_sec * 1000)))
 

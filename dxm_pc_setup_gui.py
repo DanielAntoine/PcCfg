@@ -837,6 +837,10 @@ class SetupWorker(QtCore.QObject):
     def _cancelled(self) -> bool:
         return self._cancel_requested
 
+    def _emit_command_progress(self, line: str) -> None:
+        if line.strip():
+            self.log_line.emit(f"    {line}")
+
     @QtCore.pyqtSlot()
     def run(self) -> None:
         try:
@@ -1158,8 +1162,13 @@ class SetupWorker(QtCore.QObject):
             self.log_line.emit(step_name)
             ok = True
             for cmd in step.commands:
-                rc, out = run_command_with_options(cmd, timeout_sec=DEFAULT_APPLY_TIMEOUT_SEC, cancel_requested=self._cancelled)
                 self.log_line.emit(f"  $ {format_command(cmd)}")
+                rc, out = run_command_with_options(
+                    cmd,
+                    timeout_sec=DEFAULT_APPLY_TIMEOUT_SEC,
+                    cancel_requested=self._cancelled,
+                    on_output=self._emit_command_progress,
+                )
                 if rc == COMMAND_CANCEL_EXIT_CODE:
                     self.log_line.emit("    -> CANCELLED")
                     self.step_finished.emit(step_name, False)
@@ -1192,8 +1201,13 @@ class SetupWorker(QtCore.QObject):
                 self.step_started.emit(step_name)
                 self.log_line.emit(step_name)
                 cmd = step.commands[0]
-                rc, out = run_command_with_options(cmd, timeout_sec=DEFAULT_INSTALL_TIMEOUT_SEC, cancel_requested=self._cancelled)
                 self.log_line.emit(f"  $ {format_command(cmd)}")
+                rc, out = run_command_with_options(
+                    cmd,
+                    timeout_sec=DEFAULT_INSTALL_TIMEOUT_SEC,
+                    cancel_requested=self._cancelled,
+                    on_output=self._emit_command_progress,
+                )
                 if rc == COMMAND_CANCEL_EXIT_CODE:
                     self.log_line.emit("    -> CANCELLED")
                     self.step_finished.emit(step_name, False)
