@@ -153,7 +153,7 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Numbering00 set to none by default
 - [x] start whit no "Apply option" check by default
 ## TODO
-- [ ] Decide macOS support target (MVP vs feature-parity), minimum macOS version, and supported CPU architectures (Apple Silicon only or universal2).
+- [ ] Decide macOS support target (MVP vs feature-parity), minimum macOS version, and supported CPU architectures (universal2).
 - [ ] Inventory all Windows-only execution paths and tag each one as: `portable`, `macOS equivalent`, or `Windows-only`.
 - [ ] Introduce a platform abstraction layer so UI/domain code calls one service contract instead of direct PowerShell/registry commands.
 - [ ] Implement a macOS platform adapter with read-only inspect probes first, then safe apply actions.
