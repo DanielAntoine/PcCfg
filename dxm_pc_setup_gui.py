@@ -174,9 +174,13 @@ def load_stylesheet() -> str:
     for svg_name in ("arrow_down_light.svg", "arrow_down_disabled.svg"):
         svg_path = (style_dir / svg_name).resolve()
         if svg_path.exists():
+            # Qt stylesheet `url(...)` handling on Windows can mis-handle `file:///...`
+            # URIs (it may prepend the current working directory and treat them as
+            # relative). Use a normalized absolute local path instead.
+            svg_qss_path = svg_path.as_posix()
             stylesheet = stylesheet.replace(
                 f"url(style/{svg_name})",
-                f"url({svg_path.as_uri()})",
+                f'url("{svg_qss_path}")',
             )
     return stylesheet
 
