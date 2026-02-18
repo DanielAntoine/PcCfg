@@ -8,7 +8,7 @@ from pathlib import Path
 from .models import ChecklistField, ChecklistItem, ChecklistSection
 
 def get_app_data_root() -> Path:
-        """Return and create a writable storage root colocated with the app executable/script."""
+    """Return and create a writable storage root colocated with the app executable/script."""
     if getattr(sys, "frozen", False):
         app_root = Path(sys.executable).resolve().parent
     else:
