@@ -195,6 +195,10 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("software_companion", "Bitfocus Companion"),
             ChecklistItem("software_stream_deck", "Elgato Stream Deck"),
             ChecklistItem("software_screenconnect", "ScreenConnect"),
+            ChecklistItem("software_davinci_resolve", "Davinci Resolve"),
+            ChecklistItem("software_creative_cloud", "Creative Cloud"),
+            ChecklistItem("software_blackmagic_desktop_video", "Blackmagic Desktop Video"),
+            ChecklistItem("software_vmix", "Vmix"),
         ),
     ),
     ChecklistSection("capture_validation", "14) Capture card validation", (
