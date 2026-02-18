@@ -1341,6 +1341,7 @@ class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._mirror_output_to_external_console = False
+        self._external_console_visible = False
         self._drag_checkbox_filter = DragCheckBoxEventFilter(self)
         app = QtWidgets.QApplication.instance()
         if app is not None:
@@ -1362,6 +1363,7 @@ class MainWindow(QtWidgets.QWidget):
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
+        self.external_console_button = QtWidgets.QPushButton("Show external console")
 
         self.output = QtWidgets.QPlainTextEdit()
         self.output.setReadOnly(True)
@@ -1569,6 +1571,7 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
         btn_row.addWidget(self.cancel_button)
+        btn_row.addWidget(self.external_console_button)
 
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.addStretch(1)
@@ -1598,6 +1601,7 @@ class MainWindow(QtWidgets.QWidget):
         self.new_install_button.clicked.connect(self._start_new_install)
         self.export_installation_report_button.clicked.connect(self._export_installation_report)
         self.cancel_button.clicked.connect(self._request_cancel)
+        self.external_console_button.clicked.connect(self._toggle_external_console)
         self.save_report_button.clicked.connect(self._save_report_txt)
         self.save_profile_button.clicked.connect(self._save_profile)
         self.reload_profile_button.clicked.connect(self._reload_selected_profile)
@@ -2467,10 +2471,27 @@ class MainWindow(QtWidgets.QWidget):
                 app.restoreOverrideCursor()
 
         if running:
-            self._mirror_output_to_external_console = show_windows_console()
+            self._set_external_console_visibility(True)
+        elif not self._external_console_visible:
+            self._set_external_console_visibility(False)
+
+    def _set_external_console_visibility(self, visible: bool) -> None:
+        if visible:
+            self._external_console_visible = show_windows_console()
+            self._mirror_output_to_external_console = self._external_console_visible
         else:
+            self._external_console_visible = False
             self._mirror_output_to_external_console = False
             hide_windows_console()
+        self._sync_external_console_button_label()
+
+    def _sync_external_console_button_label(self) -> None:
+        self.external_console_button.setText(
+            "Hide external console" if self._external_console_visible else "Show external console"
+        )
+
+    def _toggle_external_console(self) -> None:
+        self._set_external_console_visibility(not self._external_console_visible)
 
     def _start_worker(self, worker: SetupWorker) -> None:
         self._worker_thread = QtCore.QThread(self)
