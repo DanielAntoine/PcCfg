@@ -33,7 +33,7 @@ STATUS_CHIP_STATES = ("PASS", "FAIL", "PENDING", "RUNNING", "NA")
 MANUAL_STATUS_CYCLE = ("PENDING", "PASS", "FAIL", "NA")
 
 from pccfg.domain.apply_catalog import APPLY_TASK_DEFINITIONS
-from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS, SOFTWARE_INSPECT_APPS, validate_install_app_catalog
+from pccfg.domain.catalogs import INSTALL_APPS, MANUAL_INSTALL_APPS, validate_install_app_catalog
 from pccfg.domain.checklist import (
     CHECKLIST_FIELDS,
     CHECKLIST_LOG_FILE,
@@ -63,11 +63,8 @@ from pccfg.services.command_runner import (
     run_command_with_options,
 )
 from pccfg.services.system_probes import (
-    collect_software_detection_snapshot,
     detect_internet_reachability,
     detect_remote_desktop_readiness,
-    detect_screenconnect_installation,
-    detect_software_installation_from_snapshot,
     detect_ssh_readiness,
     detect_unused_disks,
     detect_wifi_adapter,
@@ -92,9 +89,7 @@ CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
     "screenconnect_id": "record_scid",
 }
 
-DEFAULT_NA_ITEM_IDS = {app.inspect_item_id for app in SOFTWARE_INSPECT_APPS if app.inspect_item_id}
-DEFAULT_NA_ITEM_IDS.add("software_screenconnect")
-DEFAULT_NA_ITEM_IDS.add(INVENTORY_ID_FIELD_ID)
+DEFAULT_NA_ITEM_IDS = {INVENTORY_ID_FIELD_ID}
 COMPUTER_ROLE_FIELD_CHOICES = ("", *COMPUTER_ROLE_OPTIONS)
 
 INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
@@ -1152,34 +1147,6 @@ class SetupWorker(QtCore.QObject):
             )
 
         self.log_line.emit("")
-        self.step_started.emit("Software")
-        self.log_line.emit("Software")
-        self.log_line.emit("-" * 60)
-        software_snapshot, software_snapshot_detail = collect_software_detection_snapshot(self._cancelled)
-        for app in SOFTWARE_INSPECT_APPS:
-            if software_snapshot is not None:
-                installed_ok, installed_detail = detect_software_installation_from_snapshot(app, software_snapshot)
-            else:
-                installed_ok, installed_detail = (None, software_snapshot_detail or "Unable to query")
-            task_label = ITEM_LABELS_BY_ID.get(app.inspect_item_id or "", app.label)
-            if installed_ok is None:
-                self.log_line.emit(format_status_line(app.label, installed_detail, False))
-                self.checklist_status.emit(task_label, "PENDING", False, installed_detail)
-            else:
-                self.log_line.emit(format_status_line(app.label, installed_detail, installed_ok))
-                self.checklist_status.emit(task_label, "PASS" if installed_ok else "FAIL", installed_ok, f"Inspect: {installed_detail}")
-
-        sc_ok, sc_detail = detect_screenconnect_installation(self._cancelled)
-        screenconnect_task = ITEM_LABELS_BY_ID.get("software_screenconnect", "ScreenConnect")
-        if sc_ok is None:
-            self.log_line.emit(format_status_line("ScreenConnect", sc_detail, False))
-            self.checklist_status.emit(screenconnect_task, "PENDING", False, sc_detail)
-        else:
-            self.log_line.emit(format_status_line("ScreenConnect", sc_detail, sc_ok))
-            self.checklist_status.emit(screenconnect_task, "PASS" if sc_ok else "FAIL", sc_ok, f"Inspect: {sc_detail}")
-
-        self.log_line.emit("")
-        self.step_finished.emit("Software", True)
         self.step_finished.emit("Connectivity", True)
         self.completed.emit(True, "done")
 
@@ -2156,7 +2123,7 @@ class MainWindow(QtWidgets.QWidget):
             item = self.checklist_item_by_id.get(task_id)
             if item is None:
                 continue
-            state = "UNCHECKED" if task_id == "software_screenconnect" else "NA"
+            state = "NA"
             self.checklist_item_states[task_id] = state
             item.setCheckState(0, QtCore.Qt.Unchecked)
             if state == "NA":
