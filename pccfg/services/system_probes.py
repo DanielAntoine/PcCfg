@@ -227,27 +227,6 @@ def detect_remote_desktop_readiness(cancel_requested: Callable[[], bool] | None 
     return ok, f"Enabled={'OK' if enabled else 'FAIL'}, NLA={'OK' if nla else 'FAIL'}, Service={'OK' if service else 'FAIL'}, Firewall={'OK' if firewall else 'FAIL'}"
 
 
-def _match_winget_id_from_output(raw_output: str, winget_id: str) -> bool:
-    rows = parse_json_payload(raw_output)
-    normalized_id = winget_id.lower()
-    for row in rows:
-        package_id = str(row.get("Id") or row.get("PackageIdentifier") or "").strip().lower()
-        if package_id == normalized_id:
-            return True
-
-    for line in raw_output.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("-"):
-            continue
-        columns = re.split(r"\s{2,}", stripped)
-        if len(columns) < 2:
-            continue
-        candidate_id = columns[1].strip().lower()
-        if candidate_id == normalized_id:
-            return True
-    return False
-
-
 def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
     rc, output = run_command_with_options(
         ["winget", "list", "--accept-source-agreements", "--output", "json"],
@@ -307,13 +286,6 @@ def detect_software_installation_from_snapshot(
     if app.winget_id.strip().lower() in snapshot.winget_ids:
         return True, "Installed (winget snapshot)"
     return False, "Not installed"
-
-
-def detect_software_installation(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    snapshot, detail = collect_software_detection_snapshot(cancel_requested)
-    if snapshot is None:
-        return None, detail
-    return detect_software_installation_from_snapshot(app, snapshot)
 
 
 def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
