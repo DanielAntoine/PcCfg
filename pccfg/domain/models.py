@@ -20,6 +20,8 @@ class InstallApp:
     inspect_item_id: str | None = None
     detect_display_names: tuple[str, ...] = ()
     detect_publishers: tuple[str, ...] = ()
+    detect_executables: tuple[str, ...] = ()
+    detect_shortcuts: tuple[str, ...] = ()
 
 
 @dataclass

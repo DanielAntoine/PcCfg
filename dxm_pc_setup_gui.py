@@ -63,10 +63,12 @@ from pccfg.services.command_runner import (
     run_command_with_options,
 )
 from pccfg.services.system_probes import (
+    collect_software_detection_snapshot,
     detect_internet_reachability,
     detect_remote_desktop_readiness,
     detect_screenconnect_installation,
     detect_software_installation,
+    detect_software_installation_from_snapshot,
     detect_ssh_readiness,
     detect_unused_disks,
     detect_wifi_adapter,
@@ -1118,8 +1120,14 @@ class SetupWorker(QtCore.QObject):
         self.step_started.emit("Software")
         self.log_line.emit("Software")
         self.log_line.emit("-" * 60)
+        software_snapshot, software_snapshot_detail = collect_software_detection_snapshot(self._cancelled)
         for app in SOFTWARE_INSPECT_APPS:
-            installed_ok, installed_detail = detect_software_installation(app, self._cancelled)
+            if software_snapshot is not None:
+                installed_ok, installed_detail = detect_software_installation_from_snapshot(app, software_snapshot)
+            else:
+                installed_ok, installed_detail = detect_software_installation(app, self._cancelled)
+                if installed_ok is None and software_snapshot_detail:
+                    installed_detail = software_snapshot_detail
             task_label = ITEM_LABELS_BY_ID.get(app.inspect_item_id or "", app.label)
             if installed_ok is None:
                 self.log_line.emit(format_status_line(app.label, installed_detail, False))
