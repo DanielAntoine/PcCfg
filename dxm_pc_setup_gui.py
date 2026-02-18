@@ -165,10 +165,20 @@ def load_app_icon() -> QtGui.QIcon:
 
 def load_stylesheet() -> str:
     """Load optional Qt stylesheet from ./style/app.qss."""
-    stylesheet_path = Path(__file__).resolve().parent / "style" / "app.qss"
+    style_dir = Path(__file__).resolve().parent / "style"
+    stylesheet_path = style_dir / "app.qss"
     if not stylesheet_path.exists():
         return ""
-    return stylesheet_path.read_text(encoding="utf-8")
+
+    stylesheet = stylesheet_path.read_text(encoding="utf-8")
+    for svg_name in ("arrow_down_light.svg", "arrow_down_disabled.svg"):
+        svg_path = (style_dir / svg_name).resolve()
+        if svg_path.exists():
+            stylesheet = stylesheet.replace(
+                f"url(style/{svg_name})",
+                f"url({svg_path.as_uri()})",
+            )
+    return stylesheet
 
 
 def compact_single_line(output: str) -> str:
