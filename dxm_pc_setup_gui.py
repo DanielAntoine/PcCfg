@@ -315,6 +315,29 @@ def query_password_required_status(cancel_requested: Callable[[], bool] | None =
     return None
 
 
+def _command_shell_kind(command: Sequence[str]) -> str:
+    """Classify command as cmd or powershell for copy helpers."""
+    if not command:
+        return "cmd"
+    executable = command[0].strip().lower()
+    return "powershell" if executable in {"powershell", "pwsh"} else "cmd"
+
+
+def _extract_powershell_snippet(command: Sequence[str]) -> str:
+    """Return the inner PowerShell script when using -Command wrappers."""
+    if not command:
+        return ""
+
+    lowered = [part.lower() for part in command]
+    for arg_name in ("-command", "-c"):
+        if arg_name not in lowered:
+            continue
+        command_index = lowered.index(arg_name)
+        if command_index + 1 < len(command):
+            return command[command_index + 1]
+    return format_command(list(command))
+
+
 class DragCheckTreeWidget(QtWidgets.QTreeWidget):
     """QTreeWidget that supports click-and-drag checkbox toggling for task rows."""
 
@@ -1346,9 +1369,13 @@ class MainWindow(QtWidgets.QWidget):
 
         self.apply_tasks = self._build_tasks()
         self.task_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
+        self._task_command_sources: dict[str, Callable[[], list[list[str]]]] = {
+            task.key: task.action for task in self.apply_tasks
+        }
         self.install_apps = self._build_install_apps()
         self.manual_install_apps = self._build_manual_install_apps()
         self.app_checkboxes: dict[str, QtWidgets.QCheckBox] = {}
+        self._app_by_key: dict[str, InstallApp] = {app.key: app for app in self.install_apps}
         self.rename_input = QtWidgets.QLineEdit()
         self.rename_input.setPlaceholderText("Auto-generated from checklist hostname")
         self.rename_input.setReadOnly(True)
@@ -1360,6 +1387,10 @@ class MainWindow(QtWidgets.QWidget):
             cb = DragCheckBox(task.label)
             cb.setChecked(False)
             self.task_checkboxes[task.key] = cb
+            cb.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            cb.customContextMenuRequested.connect(
+                lambda pos, task_key=task.key, checkbox=cb: self._show_copy_code_context_menu(checkbox, pos, task_key=task_key)
+            )
             if task.key == "rename_pc":
                 rename_row = QtWidgets.QHBoxLayout()
                 rename_row.addWidget(cb)
@@ -1384,6 +1415,10 @@ class MainWindow(QtWidgets.QWidget):
             cb = DragCheckBox(app.label)
             cb.setChecked(False)
             self.app_checkboxes[app.key] = cb
+            cb.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            cb.customContextMenuRequested.connect(
+                lambda pos, app_key=app.key, checkbox=cb: self._show_copy_code_context_menu(checkbox, pos, app_key=app_key)
+            )
             self.apps_layout.addWidget(cb)
         self.apps_layout.addStretch(1)
 
@@ -2314,6 +2349,78 @@ class MainWindow(QtWidgets.QWidget):
     def _build_manual_install_apps(self) -> list[ManualInstallApp]:
         return list(MANUAL_INSTALL_APPS)
 
+    def _build_install_app_command(self, app: InstallApp) -> list[str]:
+        return [
+            'winget',
+            'install',
+            '--id',
+            app.winget_id,
+            '-e',
+            '--silent',
+            '--disable-interactivity',
+            '--accept-package-agreements',
+            '--accept-source-agreements',
+        ]
+
+    def _resolve_copy_commands(self, task_key: str | None = None, app_key: str | None = None) -> list[list[str]]:
+        if task_key is not None:
+            action = self._task_command_sources.get(task_key)
+            return action() if action is not None else []
+
+        if app_key is not None:
+            app = self._app_by_key.get(app_key)
+            if app is not None:
+                return [self._build_install_app_command(app)]
+
+        return []
+
+    def _build_copy_text(self, commands: list[list[str]], target_shell: str) -> str:
+        snippets: list[str] = []
+        for command in commands:
+            if target_shell == "powershell" and _command_shell_kind(command) == "powershell":
+                snippets.append(_extract_powershell_snippet(command))
+            else:
+                snippets.append(format_command(command))
+        return "\n".join(snippets)
+
+    def _copy_commands_to_clipboard(self, commands: list[list[str]], target_shell: str, label: str) -> None:
+        snippet = self._build_copy_text(commands, target_shell)
+        if not snippet.strip():
+            QtWidgets.QMessageBox.information(self, "Copy code", "No command available to copy.")
+            return
+
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard is None:
+            QtWidgets.QMessageBox.warning(self, "Copy code", "Clipboard is not available.")
+            return
+        clipboard.setText(snippet)
+        self._append(f"[INFO] Copied command snippet ({label}) to clipboard.")
+
+    def _show_copy_code_context_menu(
+        self,
+        widget: QtWidgets.QWidget,
+        position: QtCore.QPoint,
+        task_key: str | None = None,
+        app_key: str | None = None,
+    ) -> None:
+        commands = self._resolve_copy_commands(task_key=task_key, app_key=app_key)
+        if not commands:
+            return
+
+        shell_kinds = {_command_shell_kind(command) for command in commands}
+        menu = QtWidgets.QMenu(widget)
+        if shell_kinds == {"powershell"}:
+            copy_action = menu.addAction("Copy code (Powershell)")
+            copy_action.triggered.connect(lambda: self._copy_commands_to_clipboard(commands, "powershell", "Powershell"))
+        elif shell_kinds == {"cmd"}:
+            copy_action = menu.addAction("Copy code (Cmd)")
+            copy_action.triggered.connect(lambda: self._copy_commands_to_clipboard(commands, "cmd", "Cmd"))
+        else:
+            copy_action = menu.addAction("Copy code (Cmd/Powershell)")
+            copy_action.triggered.connect(lambda: self._copy_commands_to_clipboard(commands, "cmd", "Cmd/Powershell"))
+
+        menu.exec_(widget.mapToGlobal(position))
+
     def _open_manual_install_link(self, app_label: str, url: str) -> None:
         opened = QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
         if not opened:
@@ -2430,17 +2537,7 @@ class MainWindow(QtWidgets.QWidget):
         selected_apps = [a for a in self.install_apps if self.app_checkboxes[a.key].isChecked()]
         app_steps: list[ExecutionStep] = []
         for app in selected_apps:
-            cmd = [
-                'winget',
-                'install',
-                '--id',
-                app.winget_id,
-                '-e',
-                '--silent',
-                '--disable-interactivity',
-                '--accept-package-agreements',
-                '--accept-source-agreements',
-            ]
+            cmd = self._build_install_app_command(app)
             app_steps.append(ExecutionStep(label=app.label, commands=[cmd]))
 
         return selected_steps, app_steps
