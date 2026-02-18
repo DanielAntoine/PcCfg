@@ -2474,6 +2474,13 @@ class MainWindow(QtWidgets.QWidget):
         self.save_report_button.setEnabled(not running)
         self.new_install_button.setEnabled(not running)
         self.export_installation_report_button.setEnabled(not running)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            if running:
+                if app.overrideCursor() is None:
+                    app.setOverrideCursor(QtCore.Qt.WaitCursor)
+            elif app.overrideCursor() is not None:
+                app.restoreOverrideCursor()
 
     def _start_worker(self, worker: SetupWorker) -> None:
         self._worker_thread = QtCore.QThread(self)
