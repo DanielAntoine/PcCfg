@@ -656,33 +656,6 @@ def query_power_setting_indices(
     return parse_powercfg_indices(output)
 
 
-def format_power_dual_status(
-    label: str,
-    subgroup_guid: str,
-    setting_guid: str,
-    expected_ac: int,
-    expected_dc: int,
-    value_formatter: Callable[[int], str],
-    cancel_requested: Callable[[], bool] | None = None,
-) -> str:
-    ac_value, dc_value = query_power_setting_indices(subgroup_guid, setting_guid, cancel_requested)
-    if ac_value is None or dc_value is None:
-        return format_status_line(label, "Unable to query", False)
-
-    ok = ac_value == expected_ac and dc_value == expected_dc
-    if ac_value == dc_value:
-        current_value = value_formatter(ac_value)
-        expected_value = value_formatter(expected_ac)
-        display = current_value if ok else f"{current_value} (expected {expected_value})"
-        return format_status_line(label, display, ok)
-
-    display = f"AC={value_formatter(ac_value)}, DC={value_formatter(dc_value)}"
-    if not ok:
-        expected_display = f"AC={value_formatter(expected_ac)}, DC={value_formatter(expected_dc)}"
-        display = f"{display} (expected {expected_display})"
-    return format_status_line(label, display, ok)
-
-
 def collect_apply_status_checks(cancel_requested: Callable[[], bool] | None = None) -> list[tuple[str, str, bool]]:
     """Collect APPLY option status checks as structured tuples."""
     checks: list[tuple[str, str, bool]] = []

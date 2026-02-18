@@ -287,31 +287,3 @@ def detect_software_installation_from_snapshot(
         return True, "Installed (winget snapshot)"
     return False, "Not installed"
 
-
-def detect_screenconnect_installation(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    command = [
-        "powershell",
-        "-NoProfile",
-        "-Command",
-        "$paths = @('HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*');"
-        "Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue | "
-        "Where-Object { $_.DisplayName -match 'ScreenConnect|ConnectWise Control' } | "
-        "Select-Object -First 1 @{N='Scope';E={$_.PSPath}}, DisplayName | ConvertTo-Json -Compress",
-    ]
-    rc, output = run_command_with_options(
-        command,
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return None, "Unable to query"
-
-    rows = parse_json_payload(output)
-    if rows:
-        row = rows[0]
-        scope = str(row.get("Scope") or "registry").strip()
-        name = str(row.get("DisplayName") or "ScreenConnect").strip()
-        return True, f"Installed ({scope}: {name})"
-    return False, "Not installed"
