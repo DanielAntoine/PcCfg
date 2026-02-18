@@ -158,6 +158,19 @@ def set_windows_app_user_model_id(app_id: str) -> None:
         pass
 
 
+def hide_windows_console() -> None:
+    """Hide the attached Windows console window, if one exists."""
+    if not is_windows():
+        return
+    try:
+        console_window = ctypes.windll.kernel32.GetConsoleWindow()
+        if console_window:
+            ctypes.windll.user32.ShowWindow(console_window, 0)
+    except Exception:
+        # Console visibility should never block app startup.
+        pass
+
+
 def load_app_icon() -> QtGui.QIcon:
     """Load the app icon from ./Icon/PCSetup.ico if available."""
     if APP_ICON_PATH.exists():
@@ -2619,6 +2632,7 @@ def main() -> int:
     validate_install_app_catalog()
     window = MainWindow()
     window.show()
+    hide_windows_console()
     return app.exec_()
 
 
