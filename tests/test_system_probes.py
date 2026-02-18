@@ -46,6 +46,7 @@ class SnapshotDetectionTests(unittest.TestCase):
         app = InstallApp("chrome", "Google Chrome", "Google.Chrome", "cat", "software_google_chrome")
         snapshot = SoftwareDetectionSnapshot(
             winget_ids=frozenset({"google.chrome"}),
+            appx_names=frozenset(),
             registry_rows=(),
             executable_names=frozenset(),
             shortcut_names=frozenset(),
@@ -66,6 +67,7 @@ class SnapshotDetectionTests(unittest.TestCase):
         )
         snapshot = SoftwareDetectionSnapshot(
             winget_ids=frozenset(),
+            appx_names=frozenset(),
             registry_rows=(
                 {
                     "DisplayName": "Google Drive",
@@ -80,7 +82,7 @@ class SnapshotDetectionTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual("Not installed", detail)
 
-    def test_path_and_shortcut_combined_match(self) -> None:
+    def test_path_and_shortcut_evidence_does_not_mark_installed(self) -> None:
         app = InstallApp(
             "streamdeck",
             "Elgato Stream Deck",
@@ -92,23 +94,39 @@ class SnapshotDetectionTests(unittest.TestCase):
         )
         snapshot = SoftwareDetectionSnapshot(
             winget_ids=frozenset(),
+            appx_names=frozenset(),
             registry_rows=(),
             executable_names=frozenset({"streamdeck exe"}),
             shortcut_names=frozenset({"stream deck"}),
         )
         ok, detail = detect_software_installation_from_snapshot(app, snapshot)
+        self.assertFalse(ok)
+        self.assertEqual("Not installed", detail)
+
+    def test_appx_match_from_winget_id(self) -> None:
+        app = InstallApp("terminal", "Windows Terminal", "Microsoft.WindowsTerminal", "cat", "software_terminal")
+        snapshot = SoftwareDetectionSnapshot(
+            winget_ids=frozenset(),
+            appx_names=frozenset({"microsoft windowsterminal"}),
+            registry_rows=(),
+            executable_names=frozenset(),
+            shortcut_names=frozenset(),
+        )
+        ok, detail = detect_software_installation_from_snapshot(app, snapshot)
         self.assertTrue(ok)
-        self.assertIn("path+shortcut", detail)
+        self.assertIn("appx snapshot", detail)
 
 
 class SnapshotCollectionTests(unittest.TestCase):
     @patch("pccfg.services.system_probes._collect_shortcut_names", return_value=(frozenset({"shortcut"}), True))
     @patch("pccfg.services.system_probes._collect_executable_names", return_value=(frozenset({"app exe"}), True))
     @patch("pccfg.services.system_probes._collect_registry_rows", return_value=(({"DisplayName": "A"},), True))
+    @patch("pccfg.services.system_probes._collect_appx_names", return_value=(frozenset({"microsoft app"}), True))
     @patch("pccfg.services.system_probes._collect_winget_ids", return_value=(frozenset({"a.b"}), True))
     def test_collect_snapshot_keeps_ok_semantics(
         self,
         _winget: object,
+        _appx: object,
         _registry: object,
         _execs: object,
         _shortcuts: object,
@@ -118,6 +136,7 @@ class SnapshotCollectionTests(unittest.TestCase):
         assert snapshot is not None
         self.assertEqual("OK", detail)
         self.assertIn("a.b", snapshot.winget_ids)
+        self.assertIn("microsoft app", snapshot.appx_names)
 
 
 class ProbeBehaviorTests(unittest.TestCase):

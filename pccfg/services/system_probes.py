@@ -15,6 +15,7 @@ from pccfg.services.command_runner import DEFAULT_INSPECT_TIMEOUT_SEC, run_comma
 @dataclass(frozen=True)
 class SoftwareDetectionSnapshot:
     winget_ids: frozenset[str]
+    appx_names: frozenset[str]
     registry_rows: tuple[dict[str, str], ...]
     executable_names: frozenset[str]
     shortcut_names: frozenset[str]
@@ -286,11 +287,44 @@ def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> t
     return frozenset(ids), bool(ids)
 
 
+def _collect_appx_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
+    command = (
+        "Get-AppxPackage -ErrorAction SilentlyContinue | "
+        "Select-Object -ExpandProperty Name | "
+        "Sort-Object -Unique | ConvertTo-Json -Compress"
+    )
+    rc, output = run_command_with_options(
+        ["powershell", "-NoProfile", "-Command", command],
+        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
+        cancel_requested=cancel_requested,
+    )
+    if rc != 0:
+        return frozenset(), False
+
+    raw = output.strip()
+    if not raw:
+        return frozenset(), False
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return frozenset(), False
+
+    if isinstance(payload, str):
+        normalized = _normalize_text(payload)
+        return (frozenset({normalized}), True) if normalized else (frozenset(), False)
+    if isinstance(payload, list):
+        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
+        return frozenset(extracted), bool(extracted)
+    return frozenset(), False
+
+
 def _collect_registry_rows(cancel_requested: Callable[[], bool] | None = None) -> tuple[tuple[dict[str, str], ...], bool]:
     probe_command = (
         "$paths = @("
         "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
         "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
+        "'HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
         "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'"
         "); "
         "$rows = foreach ($path in $paths) { "
@@ -415,8 +449,9 @@ def _collect_shortcut_names(cancel_requested: Callable[[], bool] | None = None) 
 def collect_software_detection_snapshot(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> tuple[SoftwareDetectionSnapshot | None, str]:
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         winget_future = executor.submit(_collect_winget_ids, cancel_requested)
+        appx_future = executor.submit(_collect_appx_names, cancel_requested)
         registry_future = executor.submit(_collect_registry_rows, cancel_requested)
         executable_future = executor.submit(_collect_executable_names, cancel_requested)
         shortcut_future = executor.submit(_collect_shortcut_names, cancel_requested)
@@ -425,6 +460,10 @@ def collect_software_detection_snapshot(
             winget_ids, winget_ok = winget_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
         except Exception:
             winget_ids, winget_ok = frozenset(), False
+        try:
+            appx_names, appx_ok = appx_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
+        except Exception:
+            appx_names, appx_ok = frozenset(), False
         try:
             registry_rows, registry_ok = registry_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
         except Exception:
@@ -438,11 +477,12 @@ def collect_software_detection_snapshot(
         except Exception:
             shortcut_names, shortcut_ok = frozenset(), False
 
-    if not any((winget_ok, registry_ok, executable_ok, shortcut_ok)):
+    if not any((winget_ok, appx_ok, registry_ok, executable_ok, shortcut_ok)):
         return None, "Unable to query"
 
     snapshot = SoftwareDetectionSnapshot(
         winget_ids=winget_ids,
+        appx_names=appx_names,
         registry_rows=registry_rows,
         executable_names=executable_names,
         shortcut_names=shortcut_names,
@@ -501,12 +541,16 @@ def detect_software_installation_from_snapshot(
     if app.winget_id.strip().lower() in snapshot.winget_ids:
         return True, "Installed (winget snapshot)"
 
+    appx_patterns = {_normalize_text(app.winget_id), _normalize_text(app.label)}
+    appx_patterns.update(_normalize_text(name) for name in app.detect_display_names)
+    appx_patterns.discard("")
+    if any(pattern in snapshot.appx_names for pattern in appx_patterns):
+        return True, "Installed (appx snapshot)"
+
     registry_ok, registry_detail = _detect_from_registry_rows(app, snapshot.registry_rows)
     if registry_ok:
         return True, registry_detail
-
-    evidence_ok, evidence_detail = _detect_from_exec_and_shortcuts(app, snapshot)
-    return evidence_ok, evidence_detail
+    return False, "Not installed"
 
 
 def detect_software_installation(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
