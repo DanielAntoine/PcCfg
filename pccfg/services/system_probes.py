@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
@@ -15,19 +12,6 @@ from pccfg.services.command_runner import DEFAULT_INSPECT_TIMEOUT_SEC, run_comma
 @dataclass(frozen=True)
 class SoftwareDetectionSnapshot:
     winget_ids: frozenset[str]
-    appx_names: frozenset[str]
-    registry_rows: tuple[dict[str, str], ...]
-    executable_names: frozenset[str]
-    shortcut_names: frozenset[str]
-
-
-_SHORTCUT_CACHE_TTL_SEC = 90.0
-_shortcut_cache_lock = threading.Lock()
-_shortcut_cache: dict[str, object] = {
-    "roots": (),
-    "timestamp": 0.0,
-    "names": frozenset(),
-}
 
 
 def compact_single_line(output: str) -> str:
@@ -264,21 +248,6 @@ def _match_winget_id_from_output(raw_output: str, winget_id: str) -> bool:
     return False
 
 
-def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", value.lower())).strip()
-
-
-def _pattern_matches_text(pattern: str, text: str) -> bool:
-    normalized_pattern = _normalize_text(pattern)
-    normalized_text = _normalize_text(text)
-    if not normalized_pattern or not normalized_text:
-        return False
-    if normalized_text == normalized_pattern:
-        return True
-    escaped = re.escape(normalized_pattern)
-    return re.search(rf"(?:^|\s){escaped}(?:\s|$)", normalized_text) is not None
-
-
 def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
     rc, output = run_command_with_options(
         ["winget", "list", "--accept-source-agreements", "--output", "json"],
@@ -318,251 +287,17 @@ def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> t
     return frozenset(ids), bool(ids)
 
 
-def _collect_appx_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
-    command = (
-        "Get-AppxPackage -ErrorAction SilentlyContinue | "
-        "Select-Object -ExpandProperty Name | "
-        "Sort-Object -Unique | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return frozenset(), False
-
-    raw = output.strip()
-    if not raw:
-        return frozenset(), False
-
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return frozenset(), False
-
-    if isinstance(payload, str):
-        normalized = _normalize_text(payload)
-        return (frozenset({normalized}), True) if normalized else (frozenset(), False)
-    if isinstance(payload, list):
-        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
-        return frozenset(extracted), bool(extracted)
-    return frozenset(), False
-
-
-def _collect_registry_rows(cancel_requested: Callable[[], bool] | None = None) -> tuple[tuple[dict[str, str], ...], bool]:
-    probe_command = (
-        "$paths = @("
-        "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKCU:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',"
-        "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'"
-        "); "
-        "$rows = foreach ($path in $paths) { "
-        "Get-ItemProperty -Path $path -ErrorAction SilentlyContinue | "
-        "Where-Object { $_.DisplayName } | "
-        "Select-Object @{N='Scope';E={$path}}, DisplayName, Publisher "
-        "}; "
-        "$rows | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", probe_command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return (), False
-    rows = parse_json_payload(output)
-    return tuple(rows), bool(rows)
-
-
-def _collect_executable_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
-    command = (
-        "$paths = @($env:PATH -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Select-Object -Unique); "
-        "$existing = @($paths | Where-Object { Test-Path -LiteralPath $_ -PathType Container }); "
-        "$names = foreach ($path in $existing) { "
-        "Get-ChildItem -LiteralPath $path -File -Include *.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name "
-        "}; "
-        "$names | Select-Object -Unique | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return frozenset(), False
-
-    names = parse_json_payload(output)
-    if names:
-        extracted = {
-            _normalize_text(str(row.get("Name") or ""))
-            for row in names
-            if _normalize_text(str(row.get("Name") or ""))
-        }
-        if extracted:
-            return frozenset(extracted), True
-
-    raw = output.strip()
-    if not raw:
-        return frozenset(), False
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = []
-    if isinstance(payload, str):
-        return frozenset({_normalize_text(payload)}), True
-    if isinstance(payload, list):
-        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
-        return frozenset(extracted), bool(extracted)
-    return frozenset(), False
-
-
-def _collect_shortcut_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
-    roots = (
-        r"$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
-        r"$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
-    )
-
-    now = time.monotonic()
-    with _shortcut_cache_lock:
-        cache_roots = _shortcut_cache.get("roots")
-        cache_timestamp = float(_shortcut_cache.get("timestamp") or 0.0)
-        cache_names = _shortcut_cache.get("names")
-        if (
-            cache_roots == roots
-            and isinstance(cache_names, frozenset)
-            and now - cache_timestamp < _SHORTCUT_CACHE_TTL_SEC
-        ):
-            return cache_names, bool(cache_names)
-
-    command = (
-        "$roots = @($env:ProgramData + '\\Microsoft\\Windows\\Start Menu\\Programs',"
-        "$env:APPDATA + '\\Microsoft\\Windows\\Start Menu\\Programs');"
-        "$items = foreach ($root in $roots) {"
-        "if (Test-Path $root) {Get-ChildItem -Path $root -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | "
-        "Select-Object -ExpandProperty BaseName}};"
-        "$items | Select-Object -Unique | ConvertTo-Json -Compress"
-    )
-    rc, output = run_command_with_options(
-        ["powershell", "-NoProfile", "-Command", command],
-        timeout_sec=DEFAULT_INSPECT_TIMEOUT_SEC,
-        cancel_requested=cancel_requested,
-    )
-    if rc != 0:
-        return frozenset(), False
-
-    raw = output.strip()
-    if not raw:
-        return frozenset(), False
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return frozenset(), False
-    if isinstance(payload, str):
-        extracted = frozenset({_normalize_text(payload)})
-        with _shortcut_cache_lock:
-            _shortcut_cache["roots"] = roots
-            _shortcut_cache["timestamp"] = now
-            _shortcut_cache["names"] = extracted
-        return extracted, True
-    if isinstance(payload, list):
-        extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
-        normalized = frozenset(extracted)
-        with _shortcut_cache_lock:
-            _shortcut_cache["roots"] = roots
-            _shortcut_cache["timestamp"] = now
-            _shortcut_cache["names"] = normalized
-        return normalized, bool(normalized)
-    return frozenset(), False
-
-
 def collect_software_detection_snapshot(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> tuple[SoftwareDetectionSnapshot | None, str]:
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        winget_future = executor.submit(_collect_winget_ids, cancel_requested)
-        appx_future = executor.submit(_collect_appx_names, cancel_requested)
-        registry_future = executor.submit(_collect_registry_rows, cancel_requested)
-        executable_future = executor.submit(_collect_executable_names, cancel_requested)
-        shortcut_future = executor.submit(_collect_shortcut_names, cancel_requested)
-
-        try:
-            winget_ids, winget_ok = winget_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
-        except Exception:
-            winget_ids, winget_ok = frozenset(), False
-        try:
-            appx_names, appx_ok = appx_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
-        except Exception:
-            appx_names, appx_ok = frozenset(), False
-        try:
-            registry_rows, registry_ok = registry_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
-        except Exception:
-            registry_rows, registry_ok = (), False
-        try:
-            executable_names, executable_ok = executable_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
-        except Exception:
-            executable_names, executable_ok = frozenset(), False
-        try:
-            shortcut_names, shortcut_ok = shortcut_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
-        except Exception:
-            shortcut_names, shortcut_ok = frozenset(), False
-
-    if not any((winget_ok, appx_ok, registry_ok, executable_ok, shortcut_ok)):
+    winget_ids, winget_ok = _collect_winget_ids(cancel_requested)
+    if not winget_ok:
         return None, "Unable to query"
 
     snapshot = SoftwareDetectionSnapshot(
         winget_ids=winget_ids,
-        appx_names=appx_names,
-        registry_rows=registry_rows,
-        executable_names=executable_names,
-        shortcut_names=shortcut_names,
     )
     return snapshot, "OK"
-
-
-def _detect_from_registry_rows(app: InstallApp, rows: tuple[dict[str, str], ...]) -> tuple[bool, str]:
-    display_names = [name.strip() for name in app.detect_display_names if name.strip()]
-    if not display_names:
-        display_names = [app.label.strip()]
-    publishers = [name.strip().lower() for name in app.detect_publishers if name.strip()]
-
-    for row in rows:
-        display_name = str(row.get("DisplayName") or "").strip()
-        publisher = str(row.get("Publisher") or "").strip()
-        scope = str(row.get("Scope") or "registry").strip()
-
-        name_match = any(_pattern_matches_text(pattern, display_name) for pattern in display_names)
-        if not name_match:
-            continue
-
-        publisher_match = bool(publishers) and any(p in publisher.lower() for p in publishers)
-        match_type = "name+publisher" if publisher_match else "name"
-        return True, f"Installed (registry {match_type} {scope}: {display_name})"
-
-    return False, "Not installed"
-
-
-def _detect_from_exec_and_shortcuts(app: InstallApp, snapshot: SoftwareDetectionSnapshot) -> tuple[bool, str]:
-    executable_patterns = [_normalize_text(name) for name in app.detect_executables if _normalize_text(name)]
-    shortcut_patterns = [_normalize_text(name) for name in app.detect_shortcuts if _normalize_text(name)]
-
-    executable_match = any(pattern in snapshot.executable_names for pattern in executable_patterns)
-    shortcut_match = any(pattern in snapshot.shortcut_names for pattern in shortcut_patterns)
-    if executable_match and shortcut_match:
-        return True, "Installed (path+shortcut)"
-    if executable_match:
-        return False, "Partial evidence: executable on PATH only"
-    if shortcut_match:
-        return False, "Partial evidence: Start Menu shortcut only"
-    return False, "Not installed"
-
-
-def _detect_from_registry(app: InstallApp, cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
-    rows, ok = _collect_registry_rows(cancel_requested)
-    if not ok:
-        return None, "Unable to query"
-    return _detect_from_registry_rows(app, rows)
 
 
 def detect_software_installation_from_snapshot(
@@ -571,16 +306,6 @@ def detect_software_installation_from_snapshot(
 ) -> tuple[bool | None, str]:
     if app.winget_id.strip().lower() in snapshot.winget_ids:
         return True, "Installed (winget snapshot)"
-
-    appx_patterns = {_normalize_text(app.winget_id), _normalize_text(app.label)}
-    appx_patterns.update(_normalize_text(name) for name in app.detect_display_names)
-    appx_patterns.discard("")
-    if any(pattern in snapshot.appx_names for pattern in appx_patterns):
-        return True, "Installed (appx snapshot)"
-
-    registry_ok, registry_detail = _detect_from_registry_rows(app, snapshot.registry_rows)
-    if registry_ok:
-        return True, registry_detail
     return False, "Not installed"
 
 
