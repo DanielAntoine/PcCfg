@@ -165,6 +165,32 @@ def hide_windows_console() -> None:
         pass
 
 
+def show_windows_console() -> bool:
+    """Show (or create) a Windows console window for live command output."""
+    if not is_windows():
+        return False
+    try:
+        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
+        console_window = kernel32.GetConsoleWindow()
+        if not console_window:
+            if not kernel32.AllocConsole():
+                return False
+            console_window = kernel32.GetConsoleWindow()
+            if not console_window:
+                return False
+
+            sys.stdin = open("CONIN$", "r", encoding="utf-8", errors="ignore")
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="ignore", buffering=1)
+            sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="ignore", buffering=1)
+
+        user32.ShowWindow(console_window, 5)
+        return True
+    except Exception:
+        # Console visibility should never block app behavior.
+        return False
+
+
 def load_app_icon() -> QtGui.QIcon:
     """Load the app icon from ./Icon/PCSetup.ico if available."""
     if APP_ICON_PATH.exists():
@@ -1314,6 +1340,7 @@ class StatusChipLabel(QtWidgets.QLabel):
 class MainWindow(QtWidgets.QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._mirror_output_to_external_console = False
         self._drag_checkbox_filter = DragCheckBoxEventFilter(self)
         app = QtWidgets.QApplication.instance()
         if app is not None:
@@ -2406,6 +2433,12 @@ class MainWindow(QtWidgets.QWidget):
     def _append(self, text: str = "") -> None:
         self.output.appendPlainText(text)
         self.output.verticalScrollBar().setValue(self.output.verticalScrollBar().maximum())
+        if self._mirror_output_to_external_console:
+            print(text, flush=True)
+
+    def _append_external_console_only(self, text: str = "") -> None:
+        if self._mirror_output_to_external_console:
+            print(text, flush=True)
 
     def _toggle_all(self, state: int) -> None:
         checked = state == QtCore.Qt.Checked
@@ -2433,13 +2466,22 @@ class MainWindow(QtWidgets.QWidget):
             elif app.overrideCursor() is not None:
                 app.restoreOverrideCursor()
 
+        if running:
+            self._mirror_output_to_external_console = show_windows_console()
+        else:
+            self._mirror_output_to_external_console = False
+            hide_windows_console()
+
     def _start_worker(self, worker: SetupWorker) -> None:
         self._worker_thread = QtCore.QThread(self)
         self._worker = worker
         self._active_worker_mode = worker._mode
         self._worker.moveToThread(self._worker_thread)
 
-        worker.log_line.connect(self._append)
+        if worker._mode == "inspect":
+            worker.log_line.connect(self._append)
+        else:
+            worker.log_line.connect(self._append_external_console_only)
         worker.checklist_status.connect(self._on_inspect_checklist_status)
         worker.completed.connect(self._on_worker_completed)
 
@@ -2454,16 +2496,25 @@ class MainWindow(QtWidgets.QWidget):
     def _request_cancel(self) -> None:
         if not hasattr(self, '_worker') or self._worker is None:
             return
-        self._append('[INFO] Cancel requested. Stopping after current command...')
+        if self._active_worker_mode == "apply":
+            self._append_external_console_only('[INFO] Cancel requested. Stopping after current command...')
+        else:
+            self._append('[INFO] Cancel requested. Stopping after current command...')
         self._worker.request_cancel()
         self.cancel_button.setEnabled(False)
 
     def _on_worker_completed(self, success: bool, reason: str) -> None:
         completed_mode = self._active_worker_mode
         if reason == 'cancelled':
-            self._append('[INFO] Operation cancelled.')
+            if completed_mode == "apply":
+                self._append_external_console_only('[INFO] Operation cancelled.')
+            else:
+                self._append('[INFO] Operation cancelled.')
         elif not success:
-            self._append('[INFO] Operation finished with errors.')
+            if completed_mode == "apply":
+                self._append_external_console_only('[INFO] Operation finished with errors.')
+            else:
+                self._append('[INFO] Operation finished with errors.')
         self._set_execution_state(False)
         self._worker = None
         self._worker_thread = None
