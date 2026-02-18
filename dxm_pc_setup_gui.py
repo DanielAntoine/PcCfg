@@ -2474,7 +2474,7 @@ class MainWindow(QtWidgets.QWidget):
 
         if running:
             self._set_external_console_visibility(True)
-        elif not self._external_console_visible:
+        else:
             self._set_external_console_visibility(False)
 
     def _set_external_console_visibility(self, visible: bool) -> None:
