@@ -8,24 +8,29 @@ from pathlib import Path
 from .models import ChecklistField, ChecklistItem, ChecklistSection
 
 def get_app_data_root() -> Path:
-    """Return a writable storage root colocated with the app executable/script."""
+        """Return and create a writable storage root colocated with the app executable/script."""
     if getattr(sys, "frozen", False):
         app_root = Path(sys.executable).resolve().parent
     else:
         app_root = Path(__file__).resolve().parents[2]
 
-    data_root = app_root / ".pccfg"
-
-    # If the app location is read-only, keep the previous fallback behavior.
-    if os.access(app_root, os.W_OK):
-        return data_root
+    preferred_root = app_root / ".pccfg"
+    try:
+        preferred_root.mkdir(parents=True, exist_ok=True)
+        return preferred_root
+    except OSError:
+        pass
 
     if platform.system().lower() == "windows":
         appdata = os.getenv("APPDATA") or os.getenv("LOCALAPPDATA")
         if appdata:
-            return Path(appdata) / "PcCfg"
+            fallback_root = Path(appdata) / "PcCfg"
+            fallback_root.mkdir(parents=True, exist_ok=True)
+            return fallback_root
 
-    return Path.home() / ".pccfg"
+    fallback_root = Path.home() / ".pccfg"
+    fallback_root.mkdir(parents=True, exist_ok=True)
+    return fallback_root
 
 
 APP_DATA_ROOT = get_app_data_root()
