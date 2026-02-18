@@ -50,6 +50,37 @@ def parse_json_payload(raw_output: str) -> list[dict[str, str]]:
     return []
 
 
+def _extract_winget_package_rows(raw_output: str) -> list[dict[str, object]]:
+    raw = raw_output.strip()
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+
+    if not isinstance(payload, dict):
+        return []
+
+    if "Sources" in payload and isinstance(payload.get("Sources"), list):
+        packages: list[dict[str, object]] = []
+        for source in payload["Sources"]:
+            if not isinstance(source, dict):
+                continue
+            source_packages = source.get("Packages")
+            if isinstance(source_packages, list):
+                packages.extend(row for row in source_packages if isinstance(row, dict))
+        return packages
+
+    if "Packages" in payload and isinstance(payload.get("Packages"), list):
+        return [row for row in payload["Packages"] if isinstance(row, dict)]
+
+    return [payload]
+
+
 def detect_wifi_adapter(cancel_requested: Callable[[], bool] | None = None) -> tuple[bool | None, str]:
     command = (
         "$a = Get-NetAdapter -Physical -ErrorAction SilentlyContinue | "
@@ -255,7 +286,7 @@ def _collect_winget_ids(cancel_requested: Callable[[], bool] | None = None) -> t
         cancel_requested=cancel_requested,
     )
     if rc == 0:
-        rows = parse_json_payload(output)
+        rows = _extract_winget_package_rows(output)
         ids = {
             str(row.get("Id") or row.get("PackageIdentifier") or "").strip().lower()
             for row in rows
