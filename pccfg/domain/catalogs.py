@@ -112,10 +112,6 @@ INSTALL_APPS: tuple[InstallApp, ...] = (
     ),
 )
 
-SOFTWARE_INSPECT_APPS: tuple[InstallApp, ...] = tuple(
-    app for app in INSTALL_APPS if app.inspect_item_id
-)
-
 MANUAL_INSTALL_APPS: tuple[ManualInstallApp, ...] = (
     ManualInstallApp("davinci_resolve", "DaVinci Resolve", "Video editing / color grading", "https://www.blackmagicdesign.com/products/davinciresolve"),
     ManualInstallApp("creative_cloud", "Adobe Creative Cloud", "Creative suite management", "https://www.adobe.com/creativecloud/desktop-app.html"),

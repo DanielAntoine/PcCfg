@@ -82,10 +82,7 @@ CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
     ChecklistField("screenconnect_id", "Record ScreenConnect ID", "text"),
 )
 
-FIELDS_BY_ID = {field.field_id: field for field in CHECKLIST_FIELDS}
-FIELDS_BY_LABEL = {field.label: field for field in CHECKLIST_FIELDS}
 FIELD_IDS_BY_LABEL = {field.label: field.field_id for field in CHECKLIST_FIELDS}
-FIELD_LABELS_BY_ID = {field.field_id: field.label for field in CHECKLIST_FIELDS}
 
 SECTIONS: tuple[ChecklistSection, ...] = (
     ChecklistSection(
