@@ -22,7 +22,9 @@ if "PyQt5" not in sys.modules:
 from pccfg.domain.models import InstallApp
 from pccfg.services.system_probes import (
     SoftwareDetectionSnapshot,
+    _collect_winget_ids,
     _collect_executable_names,
+    _extract_winget_package_rows,
     _collect_shortcut_names,
     _shortcut_cache,
     _shortcut_cache_lock,
@@ -137,6 +139,28 @@ class SnapshotCollectionTests(unittest.TestCase):
         self.assertEqual("OK", detail)
         self.assertIn("a.b", snapshot.winget_ids)
         self.assertIn("microsoft app", snapshot.appx_names)
+
+
+class WingetParsingTests(unittest.TestCase):
+    def test_extract_rows_from_sources_payload(self) -> None:
+        rows = _extract_winget_package_rows(
+            '{"Sources":[{"Packages":[{"PackageIdentifier":"Git.Git"},{"PackageIdentifier":"Google.Chrome"}]}]}'
+        )
+        self.assertEqual(2, len(rows))
+        self.assertEqual("Git.Git", rows[0]["PackageIdentifier"])
+
+    @patch(
+        "pccfg.services.system_probes.run_command_with_options",
+        return_value=(
+            0,
+            '{"Sources":[{"Packages":[{"PackageIdentifier":"Git.Git"},{"PackageIdentifier":"Google.Chrome"}]}]}',
+        ),
+    )
+    def test_collect_winget_ids_parses_nested_json(self, _run: object) -> None:
+        winget_ids, ok = _collect_winget_ids()
+        self.assertTrue(ok)
+        self.assertIn("git.git", winget_ids)
+        self.assertIn("google.chrome", winget_ids)
 
 
 class ProbeBehaviorTests(unittest.TestCase):
