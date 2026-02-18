@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
@@ -15,6 +18,15 @@ class SoftwareDetectionSnapshot:
     registry_rows: tuple[dict[str, str], ...]
     executable_names: frozenset[str]
     shortcut_names: frozenset[str]
+
+
+_SHORTCUT_CACHE_TTL_SEC = 90.0
+_shortcut_cache_lock = threading.Lock()
+_shortcut_cache: dict[str, object] = {
+    "roots": (),
+    "timestamp": 0.0,
+    "names": frozenset(),
+}
 
 
 def compact_single_line(output: str) -> str:
@@ -301,9 +313,12 @@ def _collect_registry_rows(cancel_requested: Callable[[], bool] | None = None) -
 
 def _collect_executable_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
     command = (
-        "$cmds = Get-Command -CommandType Application -ErrorAction SilentlyContinue | "
-        "Select-Object -ExpandProperty Name -Unique; "
-        "$cmds | ConvertTo-Json -Compress"
+        "$paths = @($env:PATH -split ';' | Where-Object { $_ } | ForEach-Object { $_.Trim() } | Select-Object -Unique); "
+        "$existing = @($paths | Where-Object { Test-Path -LiteralPath $_ -PathType Container }); "
+        "$names = foreach ($path in $existing) { "
+        "Get-ChildItem -LiteralPath $path -File -Include *.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name "
+        "}; "
+        "$names | Select-Object -Unique | ConvertTo-Json -Compress"
     )
     rc, output = run_command_with_options(
         ["powershell", "-NoProfile", "-Command", command],
@@ -339,6 +354,23 @@ def _collect_executable_names(cancel_requested: Callable[[], bool] | None = None
 
 
 def _collect_shortcut_names(cancel_requested: Callable[[], bool] | None = None) -> tuple[frozenset[str], bool]:
+    roots = (
+        r"$env:ProgramData\Microsoft\Windows\Start Menu\Programs",
+        r"$env:APPDATA\Microsoft\Windows\Start Menu\Programs",
+    )
+
+    now = time.monotonic()
+    with _shortcut_cache_lock:
+        cache_roots = _shortcut_cache.get("roots")
+        cache_timestamp = float(_shortcut_cache.get("timestamp") or 0.0)
+        cache_names = _shortcut_cache.get("names")
+        if (
+            cache_roots == roots
+            and isinstance(cache_names, frozenset)
+            and now - cache_timestamp < _SHORTCUT_CACHE_TTL_SEC
+        ):
+            return cache_names, bool(cache_names)
+
     command = (
         "$roots = @($env:ProgramData + '\\Microsoft\\Windows\\Start Menu\\Programs',"
         "$env:APPDATA + '\\Microsoft\\Windows\\Start Menu\\Programs');"
@@ -363,20 +395,48 @@ def _collect_shortcut_names(cancel_requested: Callable[[], bool] | None = None) 
     except json.JSONDecodeError:
         return frozenset(), False
     if isinstance(payload, str):
-        return frozenset({_normalize_text(payload)}), True
+        extracted = frozenset({_normalize_text(payload)})
+        with _shortcut_cache_lock:
+            _shortcut_cache["roots"] = roots
+            _shortcut_cache["timestamp"] = now
+            _shortcut_cache["names"] = extracted
+        return extracted, True
     if isinstance(payload, list):
         extracted = {_normalize_text(str(item)) for item in payload if _normalize_text(str(item))}
-        return frozenset(extracted), bool(extracted)
+        normalized = frozenset(extracted)
+        with _shortcut_cache_lock:
+            _shortcut_cache["roots"] = roots
+            _shortcut_cache["timestamp"] = now
+            _shortcut_cache["names"] = normalized
+        return normalized, bool(normalized)
     return frozenset(), False
 
 
 def collect_software_detection_snapshot(
     cancel_requested: Callable[[], bool] | None = None,
 ) -> tuple[SoftwareDetectionSnapshot | None, str]:
-    winget_ids, winget_ok = _collect_winget_ids(cancel_requested)
-    registry_rows, registry_ok = _collect_registry_rows(cancel_requested)
-    executable_names, executable_ok = _collect_executable_names(cancel_requested)
-    shortcut_names, shortcut_ok = _collect_shortcut_names(cancel_requested)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        winget_future = executor.submit(_collect_winget_ids, cancel_requested)
+        registry_future = executor.submit(_collect_registry_rows, cancel_requested)
+        executable_future = executor.submit(_collect_executable_names, cancel_requested)
+        shortcut_future = executor.submit(_collect_shortcut_names, cancel_requested)
+
+        try:
+            winget_ids, winget_ok = winget_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
+        except Exception:
+            winget_ids, winget_ok = frozenset(), False
+        try:
+            registry_rows, registry_ok = registry_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
+        except Exception:
+            registry_rows, registry_ok = (), False
+        try:
+            executable_names, executable_ok = executable_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
+        except Exception:
+            executable_names, executable_ok = frozenset(), False
+        try:
+            shortcut_names, shortcut_ok = shortcut_future.result(timeout=DEFAULT_INSPECT_TIMEOUT_SEC + 5)
+        except Exception:
+            shortcut_names, shortcut_ok = frozenset(), False
 
     if not any((winget_ok, registry_ok, executable_ok, shortcut_ok)):
         return None, "Unable to query"

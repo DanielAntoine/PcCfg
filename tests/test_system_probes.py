@@ -1,9 +1,33 @@
 import unittest
+from unittest.mock import patch
+
+import sys
+import types
+
+if "PyQt5" not in sys.modules:
+    pyqt5 = types.ModuleType("PyQt5")
+    qtcore = types.ModuleType("QtCore")
+
+    class _DummyQThread:
+        @staticmethod
+        def msleep(_ms: int) -> None:
+            return None
+
+    qtcore.QThread = _DummyQThread
+    pyqt5.QtCore = qtcore
+    sys.modules["PyQt5"] = pyqt5
+    sys.modules["PyQt5.QtCore"] = qtcore
+
 
 from pccfg.domain.models import InstallApp
 from pccfg.services.system_probes import (
     SoftwareDetectionSnapshot,
+    _collect_executable_names,
+    _collect_shortcut_names,
+    _shortcut_cache,
+    _shortcut_cache_lock,
     _pattern_matches_text,
+    collect_software_detection_snapshot,
     detect_software_installation_from_snapshot,
 )
 
@@ -75,6 +99,53 @@ class SnapshotDetectionTests(unittest.TestCase):
         ok, detail = detect_software_installation_from_snapshot(app, snapshot)
         self.assertTrue(ok)
         self.assertIn("path+shortcut", detail)
+
+
+class SnapshotCollectionTests(unittest.TestCase):
+    @patch("pccfg.services.system_probes._collect_shortcut_names", return_value=(frozenset({"shortcut"}), True))
+    @patch("pccfg.services.system_probes._collect_executable_names", return_value=(frozenset({"app exe"}), True))
+    @patch("pccfg.services.system_probes._collect_registry_rows", return_value=(({"DisplayName": "A"},), True))
+    @patch("pccfg.services.system_probes._collect_winget_ids", return_value=(frozenset({"a.b"}), True))
+    def test_collect_snapshot_keeps_ok_semantics(
+        self,
+        _winget: object,
+        _registry: object,
+        _execs: object,
+        _shortcuts: object,
+    ) -> None:
+        snapshot, detail = collect_software_detection_snapshot()
+        self.assertIsNotNone(snapshot)
+        assert snapshot is not None
+        self.assertEqual("OK", detail)
+        self.assertIn("a.b", snapshot.winget_ids)
+
+
+class ProbeBehaviorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        with _shortcut_cache_lock:
+            _shortcut_cache["roots"] = ()
+            _shortcut_cache["timestamp"] = 0.0
+            _shortcut_cache["names"] = frozenset()
+
+    @patch("pccfg.services.system_probes.run_command_with_options", return_value=(0, '["ffmpeg.exe", "git.exe"]'))
+    def test_collect_executable_names_normalizes_json_list(self, _run: object) -> None:
+        names, ok = _collect_executable_names()
+        self.assertTrue(ok)
+        self.assertIn("ffmpeg exe", names)
+        self.assertIn("git exe", names)
+
+    def test_collect_shortcut_names_uses_cache(self) -> None:
+        with patch(
+            "pccfg.services.system_probes.run_command_with_options",
+            return_value=(0, '["Google Chrome", "OBS Studio"]'),
+        ) as mock_run:
+            first_names, first_ok = _collect_shortcut_names()
+            second_names, second_ok = _collect_shortcut_names()
+
+        self.assertTrue(first_ok)
+        self.assertTrue(second_ok)
+        self.assertEqual(first_names, second_names)
+        self.assertEqual(1, mock_run.call_count)
 
 
 if __name__ == "__main__":
