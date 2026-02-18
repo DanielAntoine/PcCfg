@@ -67,7 +67,6 @@ from pccfg.services.system_probes import (
     detect_internet_reachability,
     detect_remote_desktop_readiness,
     detect_screenconnect_installation,
-    detect_software_installation,
     detect_software_installation_from_snapshot,
     detect_ssh_readiness,
     detect_unused_disks,
@@ -1161,9 +1160,7 @@ class SetupWorker(QtCore.QObject):
             if software_snapshot is not None:
                 installed_ok, installed_detail = detect_software_installation_from_snapshot(app, software_snapshot)
             else:
-                installed_ok, installed_detail = detect_software_installation(app, self._cancelled)
-                if installed_ok is None and software_snapshot_detail:
-                    installed_detail = software_snapshot_detail
+                installed_ok, installed_detail = (None, software_snapshot_detail or "Unable to query")
             task_label = ITEM_LABELS_BY_ID.get(app.inspect_item_id or "", app.label)
             if installed_ok is None:
                 self.log_line.emit(format_status_line(app.label, installed_detail, False))
