@@ -153,3 +153,160 @@ Install-Package <name> -Force -Confirm:$false
 - [x] Numbering00 set to none by default
 - [x] start whit no "Apply option" check by default
 ## TODO
+- [ ] Decide macOS support target (MVP vs feature-parity), minimum macOS version, and supported CPU architectures (Apple Silicon only or universal2).
+- [ ] Inventory all Windows-only execution paths and tag each one as: `portable`, `macOS equivalent`, or `Windows-only`.
+- [ ] Introduce a platform abstraction layer so UI/domain code calls one service contract instead of direct PowerShell/registry commands.
+- [ ] Implement a macOS platform adapter with read-only inspect probes first, then safe apply actions.
+- [ ] Add capability flags so unsupported actions are disabled/hidden on macOS with clear user messaging.
+- [ ] Add cross-platform tests for platform adapters and checklist mapping behavior.
+- [ ] Add macOS packaging workflow (`.app`/DMG) plus signing/notarization notes.
+- [ ] Validate on real macOS hardware and produce a support matrix in docs.
+
+## macOS version plan (maintainable, phase-by-phase)
+
+The recommended path is to keep one codebase and split operating-system logic into adapter modules. This avoids duplicating UI code and keeps Windows behavior stable while macOS support grows.
+
+### Phase 0 — Scope and architecture baseline
+**Goal:** lock requirements before code movement.
+
+**Deliverables**
+- Define supported macOS versions and architecture target(s).
+- Define MVP feature set for macOS (Inspect-only vs partial Apply).
+- Agree on commands/providers: Homebrew, `scutil`, `sw_vers`, `networksetup`, `pmset`, `defaults`.
+
+**File-level changes**
+- `README.md`
+  - Add support matrix draft and macOS MVP scope.
+- `docs/software-detection-task-plan.md`
+  - Add a platform notes section to separate Windows and macOS evidence sources.
+
+---
+
+### Phase 1 — Create platform service abstraction (no behavior change)
+**Goal:** isolate OS-specific code behind interfaces.
+
+**Deliverables**
+- Add a `PlatformService` contract for:
+  - software discovery/install
+  - system probes (hostname/network/os/version)
+  - apply operations (power/notifications/remote access/etc.)
+  - capability reporting for UI.
+- Keep current Windows behavior as default implementation.
+
+**File-level changes**
+- `pccfg/services/platform/base.py` *(new)*
+  - Define abstract methods + capability model.
+- `pccfg/services/platform/windows.py` *(new)*
+  - Wrap existing Windows commands and logic.
+- `pccfg/services/platform/factory.py` *(new)*
+  - Runtime selection by `sys.platform`.
+- `pccfg/services/__init__.py`
+  - Export platform service helpers.
+- `dxm_pc_setup_gui.py`
+  - Replace direct OS command calls with platform service calls.
+
+---
+
+### Phase 2 — Refactor Windows paths into the adapter
+**Goal:** make Windows implementation explicit and testable before adding macOS behavior.
+
+**Deliverables**
+- Move direct PowerShell/registry/winget access into `WindowsPlatformService`.
+- Keep UI and domain logic mostly unchanged except for injected service calls.
+
+**File-level changes**
+- `pccfg/services/winget.py`
+  - Convert to helper utilities consumed by windows adapter.
+- `pccfg/services/system_probes.py`
+  - Move/bridge functions into windows adapter probe methods.
+- `pccfg/domain/apply_catalog.py`
+  - Split command definitions into platform-aware action descriptors.
+- `dxm_pc_setup_gui.py`
+  - Consume descriptors/capabilities from platform service instead of hardcoded Windows assumptions.
+- `tests/test_winget.py`, `tests/test_system_probes.py`
+  - Update tests to use adapter API surface.
+
+---
+
+### Phase 3 — Add macOS inspect support (read-only first)
+**Goal:** ship a safe, useful macOS MVP quickly.
+
+**Deliverables**
+- Implement macOS inspect probes and software detection.
+- Populate checklist evidence from macOS commands.
+- Mark unsupported apply actions as unavailable.
+
+**File-level changes**
+- `pccfg/services/platform/macos.py` *(new)*
+  - Implement hostname, OS, network, disk, and software detection probes.
+- `pccfg/domain/checklist.py`
+  - Add platform-aware checklist mapping and fallback labels.
+- `pccfg/domain/models.py`
+  - Extend evidence model with source tags suitable for macOS probes.
+- `profiles/default-profile.json`
+  - Add platform metadata and defaults for unsupported tasks.
+- `dxm_pc_setup_gui.py`
+  - Disable or hide unsupported apply toggles based on capabilities.
+
+---
+
+### Phase 4 — Add selected macOS apply actions
+**Goal:** incrementally support low-risk macOS apply operations.
+
+**Deliverables**
+- Implement idempotent apply handlers for selected tasks.
+- Add rollback/safety notes for destructive or policy-sensitive actions.
+
+**File-level changes**
+- `pccfg/domain/apply_catalog.py`
+  - Add macOS action descriptors and command builders.
+- `pccfg/services/platform/macos.py`
+  - Implement apply methods with guardrails and clear failures.
+- `dxm_pc_setup_gui.py`
+  - Show macOS action availability + reason when blocked.
+
+Suggested first macOS apply targets:
+- computer name/hostname
+- energy settings that are safe in desktop contexts
+- software installs through Homebrew
+
+---
+
+### Phase 5 — Packaging, distribution, and QA hardening
+**Goal:** make macOS distribution practical for users.
+
+**Deliverables**
+- Build `.app` artifact and optional DMG.
+- Document signing + notarization workflow.
+- Expand automated tests and smoke test scripts.
+
+**File-level changes**
+- `README.md`
+  - Add macOS run/build/package instructions.
+- `.github/workflows/` *(new or update existing CI workflows)*
+  - Add macOS CI job for lint/test/package smoke checks.
+- `tests/`
+  - Add adapter contract tests and platform-specific fixtures.
+
+---
+
+### Phase 6 — Feature parity review and stabilization
+**Goal:** decide parity boundaries and finalize support policy.
+
+**Deliverables**
+- Publish support matrix: Windows-only vs macOS-supported tasks.
+- Add known limitations section.
+- Finalize release checklist for both platforms.
+
+**File-level changes**
+- `README.md`
+  - Add support matrix + limitation table.
+- `docs/software-detection-task-plan.md`
+  - Document final detection confidence rules per platform.
+
+## Suggested implementation order (quick wins)
+1. Phase 1 + Phase 2 (abstraction + Windows extraction).
+2. Phase 3 (macOS Inspect-only MVP).
+3. Phase 5 packaging baseline (internal builds).
+4. Phase 4 selected apply actions.
+5. Phase 6 parity/stabilization.
