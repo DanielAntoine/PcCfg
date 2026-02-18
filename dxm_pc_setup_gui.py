@@ -1573,10 +1573,10 @@ class MainWindow(QtWidgets.QWidget):
         btn_row.addWidget(self.run_button)
         btn_row.addWidget(self.clear_button)
         btn_row.addWidget(self.cancel_button)
-        btn_row.addWidget(self.external_console_button)
 
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.addStretch(1)
+        bottom_row.addWidget(self.external_console_button)
         bottom_row.addWidget(self.save_report_button)
 
         layout = QtWidgets.QHBoxLayout(self)
