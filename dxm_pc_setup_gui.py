@@ -109,11 +109,57 @@ INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
     "Other",
 )
 
+CODE39_PATTERNS: dict[str, str] = {
+    "0": "nnnwwnwnn",
+    "1": "wnnwnnnnw",
+    "2": "nnwwnnnnw",
+    "3": "wnwwnnnnn",
+    "4": "nnnwwnnnw",
+    "5": "wnnwwnnnn",
+    "6": "nnwwwnnnn",
+    "7": "nnnwnnwnw",
+    "8": "wnnwnnwnn",
+    "9": "nnwwnnwnn",
+    "A": "wnnnnwnnw",
+    "B": "nnwnnwnnw",
+    "C": "wnwnnwnnn",
+    "D": "nnnnwwnnw",
+    "E": "wnnnwwnnn",
+    "F": "nnwnwwnnn",
+    "G": "nnnnnwwnw",
+    "H": "wnnnnwwnn",
+    "I": "nnwnnwwnn",
+    "J": "nnnnwwwnn",
+    "K": "wnnnnnnww",
+    "L": "nnwnnnnww",
+    "M": "wnwnnnnwn",
+    "N": "nnnnwnnww",
+    "O": "wnnnwnnwn",
+    "P": "nnwnwnnwn",
+    "Q": "nnnnnnwww",
+    "R": "wnnnnnwwn",
+    "S": "nnwnnnwwn",
+    "T": "nnnnwnwwn",
+    "U": "wwnnnnnnw",
+    "V": "nwwnnnnnw",
+    "W": "wwwnnnnnn",
+    "X": "nwnnwnnnw",
+    "Y": "wwnnwnnnn",
+    "Z": "nwwnwnnnn",
+    "-": "nwnnnnwnw",
+    ".": "wwnnnnwnn",
+    " ": "nwwnnnwnn",
+    "$": "nwnwnwnnn",
+    "/": "nwnwnnnwn",
+    "+": "nwnnnwnwn",
+    "%": "nnnwnwnwn",
+    "*": "nwnnwnwnn",
+}
+
 LABEL_SIZE_OPTIONS: dict[str, tuple[float, float]] = {
     "Brother 62mm x 40mm (large)": (62.0, 40.0),
     "Brother 62mm x 29mm (compact)": (62.0, 29.0),
     "Brother 29mm x 90mm (address)": (29.0, 90.0),
-    "Custom size…": (0.0, 0.0),
 }
 
 
@@ -269,6 +315,12 @@ def parse_registry_int(raw_value: str | None) -> int | None:
         return int(token, 0)
     except ValueError:
         return None
+
+
+def normalize_code39_value(value: str) -> str:
+    """Normalize text to supported Code39 character set."""
+    normalized = re.sub(r"\s+", " ", value.strip().upper())
+    return "".join(ch for ch in normalized if ch in CODE39_PATTERNS and ch != "*")
 
 
 def draw_code39_barcode(
@@ -2284,38 +2336,7 @@ class MainWindow(QtWidgets.QWidget):
         )
         if not ok:
             return None
-        selected_size = LABEL_SIZE_OPTIONS.get(selected_label)
-        if selected_size is None:
-            return None
-
-        if selected_label != "Custom size…":
-            return selected_size
-
-        width_mm, width_ok = QtWidgets.QInputDialog.getDouble(
-            self,
-            "Custom label size",
-            "Width (mm):",
-            62.0,
-            10.0,
-            200.0,
-            1,
-        )
-        if not width_ok:
-            return None
-
-        height_mm, height_ok = QtWidgets.QInputDialog.getDouble(
-            self,
-            "Custom label size",
-            "Height (mm):",
-            40.0,
-            10.0,
-            200.0,
-            1,
-        )
-        if not height_ok:
-            return None
-
-        return width_mm, height_mm
+        return LABEL_SIZE_OPTIONS.get(selected_label)
 
     def _build_sticker_label_pixmap(self, sku: str, inventory_id: str, width_mm: float, height_mm: float) -> QtGui.QPixmap:
         px_per_mm = 12
@@ -2364,15 +2385,6 @@ class MainWindow(QtWidgets.QWidget):
                 self,
                 "Print label",
                 "SKU and Inventory ID are required before printing a label.",
-            )
-            return
-
-        if has_invalid_code39_chars(sku) or has_invalid_code39_chars(inventory_id):
-            QtWidgets.QMessageBox.warning(
-                self,
-                "Print label",
-                "SKU/Inventory ID contain unsupported barcode characters for Code39.\n"
-                "Allowed: A-Z, 0-9, space, - . $ / + %",
             )
             return
 
