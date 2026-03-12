@@ -75,6 +75,7 @@ CHECKLIST_FIELDS: tuple[ChecklistField, ...] = (
 
     ChecklistField("hostname", "Hostname/User: {ClientName6PadX}-{Role4LUpper}-{numbering00}", "text"),
     ChecklistField("inventory_id", "Inventory ID", "text"),
+    ChecklistField("sku", "SKU", "text"),
     ChecklistField("technician", "Technicien", "technician"),
     ChecklistField("date", "Date", "date"),
     ChecklistField("installed_cards", "Installed cards: BMD / 10GbE / others", "text"),
@@ -93,6 +94,7 @@ SECTIONS: tuple[ChecklistSection, ...] = (
             ChecklistItem("computer_role", "Computer role"),
             ChecklistItem("numbering", "Numbering00 (e.g., 01, 02, 03)"),
             ChecklistItem("inventory_id", "Inventory ID"),
+            ChecklistItem("sku", "SKU"),
             ChecklistItem("technician", "Technicien"),
             ChecklistItem("installed_cards", "Installed cards: BMD / 10GbE / others"),
         ),

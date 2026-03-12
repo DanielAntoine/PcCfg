@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Sequence
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtPrintSupport, QtWidgets
 
 
 APP_VERSION = "0.1.2"
@@ -69,12 +69,16 @@ from pccfg.services.system_probes import (
     detect_wifi_connection,
 )
 from pccfg.services.winget import is_noop_install_success
+from pccfg.services.barcode_code39 import CODE39_PATTERNS, normalize_code39_value
+from pccfg.services.barcode_code128 import CODE128_PATTERNS, encode_code128b_indices
+from pccfg.services.label_printing import LABEL_SIZE_OPTIONS, PRINT_PROFILE_OPTIONS, build_layout_plan, validate_label_values
 
 CLIENT_NAME_FIELD_ID = "client_name"
 COMPUTER_ROLE_FIELD_ID = "computer_role"
 NUMBERING_FIELD_ID = "numbering"
 HOSTNAME_FIELD_ID = "hostname"
 INVENTORY_ID_FIELD_ID = "inventory_id"
+SKU_FIELD_ID = "sku"
 DATE_FIELD_ID = "date"
 FILE_NAME_FIELD_ID = "file_name"
 HIDDEN_CHECKLIST_FIELD_IDS = {HOSTNAME_FIELD_ID, DATE_FIELD_ID, FILE_NAME_FIELD_ID}
@@ -83,6 +87,7 @@ CHECKLIST_ITEM_ID_BY_INFO_FIELD_ID = {
     COMPUTER_ROLE_FIELD_ID: COMPUTER_ROLE_FIELD_ID,
     NUMBERING_FIELD_ID: NUMBERING_FIELD_ID,
     INVENTORY_ID_FIELD_ID: INVENTORY_ID_FIELD_ID,
+    SKU_FIELD_ID: SKU_FIELD_ID,
     "technician": "technician",
     "installed_cards": "installed_cards",
     "screenconnect_id": "record_scid",
@@ -105,7 +110,6 @@ INSTALLED_CARD_OPTIONS: tuple[str, ...] = (
     "SDI I/O Card",
     "Other",
 )
-
 
 def is_windows() -> bool:
     return platform.system().lower() == "windows"
@@ -259,6 +263,126 @@ def parse_registry_int(raw_value: str | None) -> int | None:
         return int(token, 0)
     except ValueError:
         return None
+
+
+def draw_code39_barcode(
+    painter: QtGui.QPainter,
+    value: str,
+    rect: QtCore.QRectF,
+    *,
+    wide_ratio: float = 2.5,
+) -> bool:
+    """Draw a Code39 barcode into the target rectangle."""
+    payload = normalize_code39_value(value)
+    if not payload:
+        return False
+
+    encoded = f"*{payload}*"
+    total_narrow_units = 0.0
+    for idx, char in enumerate(encoded):
+        pattern = CODE39_PATTERNS.get(char)
+        if pattern is None:
+            return False
+        total_narrow_units += sum(wide_ratio if width == "w" else 1.0 for width in pattern)
+        if idx != len(encoded) - 1:
+            total_narrow_units += 1.0
+
+    if total_narrow_units <= 0:
+        return False
+
+    module_width = rect.width() / total_narrow_units
+    x = rect.left()
+    painter.save()
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtGui.QBrush(QtCore.Qt.black))
+
+    for idx, char in enumerate(encoded):
+        pattern = CODE39_PATTERNS[char]
+        is_bar = True
+        for width_code in pattern:
+            width = module_width * (wide_ratio if width_code == "w" else 1.0)
+            if is_bar:
+                painter.drawRect(QtCore.QRectF(x, rect.top(), width, rect.height()))
+            x += width
+            is_bar = not is_bar
+        if idx != len(encoded) - 1:
+            x += module_width
+
+    painter.restore()
+    return True
+
+
+def draw_code128_barcode(painter: QtGui.QPainter, value: str, rect: QtCore.QRectF) -> bool:
+    """Draw a Code128-B barcode into the target rectangle."""
+    indices = encode_code128b_indices(value)
+    if not indices:
+        return False
+
+    patterns = [CODE128_PATTERNS[idx] for idx in indices]
+    total_modules = sum(sum(int(ch) for ch in pattern) for pattern in patterns)
+    if total_modules <= 0:
+        return False
+
+    module_width = rect.width() / total_modules
+    x = rect.left()
+
+    painter.save()
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtCore.Qt.black)
+
+    for pattern in patterns:
+        is_bar = True
+        for width_char in pattern:
+            width = module_width * int(width_char)
+            if is_bar:
+                painter.drawRect(QtCore.QRectF(x, rect.top(), width, rect.height()))
+            x += width
+            is_bar = not is_bar
+
+    painter.restore()
+    return True
+
+
+def draw_qr_barcode(painter: QtGui.QPainter, value: str, rect: QtCore.QRectF) -> bool:
+    """Draw a QR code using optional `qrcode` package if available."""
+    try:
+        import qrcode
+    except Exception:
+        return False
+
+    normalized = value.strip()
+    if not normalized:
+        return False
+
+    qr = qrcode.QRCode(border=1, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=1)
+    qr.add_data(normalized)
+    qr.make(fit=True)
+    matrix = qr.get_matrix()
+    if not matrix:
+        return False
+
+    rows = len(matrix)
+    cols = len(matrix[0])
+    module = min(rect.width() / cols, rect.height() / rows)
+    x_offset = rect.left() + (rect.width() - (cols * module)) / 2
+    y_offset = rect.top() + (rect.height() - (rows * module)) / 2
+
+    painter.save()
+    painter.setPen(QtCore.Qt.NoPen)
+    painter.setBrush(QtCore.Qt.black)
+    for row_idx, row in enumerate(matrix):
+        for col_idx, bit in enumerate(row):
+            if bit:
+                painter.drawRect(
+                    QtCore.QRectF(
+                        x_offset + (col_idx * module),
+                        y_offset + (row_idx * module),
+                        module,
+                        module,
+                    )
+                )
+    painter.restore()
+    return True
 
 
 def parse_powercfg_indices(output: str) -> tuple[int | None, int | None]:
@@ -1363,6 +1487,7 @@ class MainWindow(QtWidgets.QWidget):
         self.cancel_button = QtWidgets.QPushButton("Cancel")
         self.cancel_button.setEnabled(False)
         self.save_report_button = QtWidgets.QPushButton("Save Report (TXT)")
+        self.print_label_button = QtWidgets.QPushButton("Print label")
         self.external_console_button = QtWidgets.QPushButton("Show external console")
 
         self.output = QtWidgets.QPlainTextEdit()
@@ -1576,6 +1701,7 @@ class MainWindow(QtWidgets.QWidget):
         bottom_row.addStretch(1)
         bottom_row.addWidget(self.external_console_button)
         bottom_row.addWidget(self.save_report_button)
+        bottom_row.addWidget(self.print_label_button)
 
         layout = QtWidgets.QHBoxLayout(self)
 
@@ -1603,6 +1729,7 @@ class MainWindow(QtWidgets.QWidget):
         self.cancel_button.clicked.connect(self._request_cancel)
         self.external_console_button.clicked.connect(self._toggle_external_console)
         self.save_report_button.clicked.connect(self._save_report_txt)
+        self.print_label_button.clicked.connect(self._print_label_sticker)
         self.save_profile_button.clicked.connect(self._save_profile)
         self.reload_profile_button.clicked.connect(self._reload_selected_profile)
         self.delete_profile_button.clicked.connect(self._delete_selected_profile)
@@ -2212,6 +2339,221 @@ class MainWindow(QtWidgets.QWidget):
         self._append(f"[INFO] Report saved to: {Path(selected_path).resolve()}")
         self._open_text_file(selected_path, "Save Report")
 
+    def _prompt_label_size(self) -> tuple[float, float] | None:
+        options = list(LABEL_SIZE_OPTIONS.keys())
+        selected_label, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Print label",
+            "Select label size:",
+            options,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        selected_size = LABEL_SIZE_OPTIONS.get(selected_label)
+        if selected_size is None:
+            return None
+
+        if selected_label != "Custom size…":
+            return selected_size
+
+        width_mm, width_ok = QtWidgets.QInputDialog.getDouble(
+            self,
+            "Custom label size",
+            "Width (mm):",
+            62.0,
+            10.0,
+            200.0,
+            1,
+        )
+        if not width_ok:
+            return None
+
+        height_mm, height_ok = QtWidgets.QInputDialog.getDouble(
+            self,
+            "Custom label size",
+            "Height (mm):",
+            40.0,
+            10.0,
+            200.0,
+            1,
+        )
+        if not height_ok:
+            return None
+
+        return width_mm, height_mm
+
+    def _prompt_print_profile(self) -> str | None:
+        options = list(PRINT_PROFILE_OPTIONS.keys())
+        selected_label, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Print label",
+            "Select barcode profile:",
+            options,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        return PRINT_PROFILE_OPTIONS.get(selected_label)
+
+    def _render_label_to_printer(
+        self,
+        painter: QtGui.QPainter,
+        page_rect: QtCore.QRectF,
+        *,
+        sku: str,
+        inventory_id: str,
+        barcode_profile: str,
+    ) -> tuple[bool, str]:
+        include_qr = barcode_profile == "code128_qr"
+        try:
+            layout_plan = build_layout_plan(page_rect.width(), page_rect.height(), include_qr=include_qr)
+        except ValueError as exc:
+            return False, str(exc)
+
+        margin = max(8.0, min(page_rect.width(), page_rect.height()) * 0.03)
+        content = page_rect.adjusted(margin, margin, -margin, -margin)
+        if content.width() <= 0 or content.height() <= 0:
+            return False, "Label content area is too small."
+
+        text_height = content.height() * layout_plan.title_height_ratio
+        barcode_height = content.height() * layout_plan.barcode_height_ratio
+        note_height = content.height() * layout_plan.note_height_ratio
+        qr_size = content.height() * layout_plan.qr_size_ratio if include_qr else 0.0
+        spacing = max(3.0, content.height() * 0.02)
+
+        required_height = (text_height * 2) + (barcode_height * 2) + (spacing * 3) + note_height
+        if required_height > content.height():
+            return False, "Selected label size is too small for the requested content."
+
+        text_font = QtGui.QFont("Arial", max(7, int(text_height * 0.45)))
+        note_font = QtGui.QFont("Arial", max(6, int(note_height * 0.6)))
+        painter.setPen(QtCore.Qt.black)
+
+        y = content.top()
+        painter.setFont(text_font)
+        painter.drawText(QtCore.QRectF(content.left(), y, content.width(), text_height), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, f"SKU: {sku}")
+        y += text_height
+
+        barcode_width = content.width() - (qr_size + spacing if include_qr else 0.0)
+        sku_bar_rect = QtCore.QRectF(content.left(), y, barcode_width, barcode_height)
+        sku_qr_rect = QtCore.QRectF(content.left() + barcode_width + spacing, y, qr_size, barcode_height) if include_qr else None
+        y += barcode_height + spacing
+
+        painter.drawText(QtCore.QRectF(content.left(), y, content.width(), text_height), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, f"Inventory ID: {inventory_id}")
+        y += text_height
+
+        inv_bar_rect = QtCore.QRectF(content.left(), y, barcode_width, barcode_height)
+        inv_qr_rect = QtCore.QRectF(content.left() + barcode_width + spacing, y, qr_size, barcode_height) if include_qr else None
+        y += barcode_height + spacing
+
+        if barcode_profile == "code39":
+            barcode_ok = draw_code39_barcode(painter, sku, sku_bar_rect) and draw_code39_barcode(painter, inventory_id, inv_bar_rect)
+            note = "Barcode format: Code39"
+        else:
+            barcode_ok = draw_code128_barcode(painter, sku, sku_bar_rect) and draw_code128_barcode(painter, inventory_id, inv_bar_rect)
+            note = "Barcode format: Code128-B"
+
+        if not barcode_ok:
+            return False, "Unable to render barcode payload with the selected format."
+
+        if include_qr:
+            qr_ok = draw_qr_barcode(painter, sku, sku_qr_rect) and draw_qr_barcode(painter, inventory_id, inv_qr_rect)  # type: ignore[arg-type]
+            if not qr_ok:
+                return False, "QR rendering is unavailable. Install the `qrcode` Python package and retry."
+            note += " + QR"
+
+        painter.setFont(note_font)
+        painter.drawText(QtCore.QRectF(content.left(), y, content.width(), note_height), QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, note)
+        return True, ""
+
+    def _show_label_preview(self, printer: QtPrintSupport.QPrinter, sku: str, inventory_id: str, barcode_profile: str) -> bool:
+        preview = QtPrintSupport.QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Label preview")
+
+        def _on_paint_requested(preview_printer: QtPrintSupport.QPrinter) -> None:
+            preview_painter = QtGui.QPainter(preview_printer)
+            if not preview_painter.isActive():
+                return
+            try:
+                rect = QtCore.QRectF(preview_painter.viewport())
+                self._render_label_to_printer(
+                    preview_painter,
+                    rect,
+                    sku=sku,
+                    inventory_id=inventory_id,
+                    barcode_profile=barcode_profile,
+                )
+            finally:
+                preview_painter.end()
+
+        preview.paintRequested.connect(_on_paint_requested)
+        return preview.exec_() == QtWidgets.QDialog.Accepted
+
+    def _print_label_sticker(self) -> None:
+        sku = self._get_checklist_info_text(SKU_FIELD_ID)
+        inventory_id = self._get_checklist_info_text(INVENTORY_ID_FIELD_ID)
+        barcode_profile = self._prompt_print_profile()
+        if barcode_profile is None:
+            self._append("[INFO] Label print cancelled (no barcode profile selected).")
+            return
+
+        validation_error = validate_label_values(sku, inventory_id, barcode_profile)
+        if validation_error:
+            QtWidgets.QMessageBox.warning(self, "Print label", validation_error)
+            self._append("[WARN] Label print blocked by validation.")
+            return
+
+        selected_size = self._prompt_label_size()
+        if selected_size is None:
+            self._append("[INFO] Label print cancelled (no label size selected).")
+            return
+        width_mm, height_mm = selected_size
+
+        printer = QtPrintSupport.QPrinter(QtPrintSupport.QPrinter.HighResolution)
+        printer.setCopyCount(1)
+        printer.setPageSizeMM(QtCore.QSizeF(width_mm, height_mm))
+
+        if not self._show_label_preview(printer, sku, inventory_id, barcode_profile):
+            self._append("[INFO] Label print cancelled at preview step.")
+            return
+
+        dialog = QtPrintSupport.QPrintDialog(printer, self)
+        dialog.setWindowTitle("Print label")
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
+            self._append("[INFO] Label print cancelled in print dialog.")
+            return
+
+        painter = QtGui.QPainter(printer)
+        if not painter.isActive():
+            QtWidgets.QMessageBox.critical(self, "Print label", "Failed to start printer painter context.")
+            self._append("[ERROR] Label print failed: painter context not active.")
+            return
+
+        try:
+            ok, error_message = self._render_label_to_printer(
+                painter,
+                QtCore.QRectF(painter.viewport()),
+                sku=sku,
+                inventory_id=inventory_id,
+                barcode_profile=barcode_profile,
+            )
+            if not ok:
+                QtWidgets.QMessageBox.critical(self, "Print label", error_message)
+                self._append(f"[ERROR] Label print failed: {error_message}")
+                return
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Print label", f"Unexpected print failure:\n{exc}")
+            self._append(f"[ERROR] Label print failed: {exc}")
+            return
+        finally:
+            if painter.isActive():
+                painter.end()
+
+        self._append("[INFO] Label print job sent (SKU + Inventory ID).")
+
     def _export_installation_report(self) -> None:
         total = len(self.installation_checklist_items)
         completed = sum(item.checkState(0) == QtCore.Qt.Checked for item in self.installation_checklist_items)
@@ -2460,6 +2802,7 @@ class MainWindow(QtWidgets.QWidget):
         self.apps_group.setEnabled(not running)
         self.manual_group.setEnabled(not running)
         self.save_report_button.setEnabled(not running)
+        self.print_label_button.setEnabled(not running)
         self.new_install_button.setEnabled(not running)
         self.export_installation_report_button.setEnabled(not running)
         app = QtWidgets.QApplication.instance()

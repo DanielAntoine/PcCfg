@@ -25,6 +25,20 @@ From the project folder:
 python dxm_pc_setup_gui.py
 ```
 
+## Label printing (manual)
+- The app includes a **Print label** button in the bottom-right action row.
+- It prints a sticker containing:
+  - `SKU` (readable text + barcode)
+  - `Inventory ID` (readable text + barcode)
+- Barcode profiles:
+  - `Scanner only (Code128)`
+  - `Scanner + phone (Code128 + QR)`
+  - `Legacy (Code39)`
+- A print preview opens before the final print dialog.
+- Label size is selected at print time (Brother QL presets + custom size option).
+- Validation is applied before print for the selected barcode profile.
+- QR rendering requires Python package `qrcode` at runtime; if unavailable, QR profile will fail with a clear message.
+
 ## Build EXE with icon (Windows)
 
 Use PyInstaller with the included `app.ico` file:
