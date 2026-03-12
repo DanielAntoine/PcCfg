@@ -25,6 +25,15 @@ From the project folder:
 python dxm_pc_setup_gui.py
 ```
 
+## Label printing (manual)
+- The app includes a **Print label** button in the bottom-right action row.
+- It prints a sticker containing:
+  - `SKU` (readable text + barcode)
+  - `Inventory ID` (readable text + barcode)
+- Current barcode renderer uses **Code39** for compatibility without extra runtime dependencies.
+- Label size is selected at print time (Brother QL presets + custom size option).
+- Code39 character set is validated before print (`A-Z`, `0-9`, space, `- . $ / + %`).
+
 ## Build EXE with icon (Windows)
 
 Use PyInstaller with the included `app.ico` file:
