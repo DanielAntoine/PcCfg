@@ -69,6 +69,7 @@ from pccfg.services.system_probes import (
     detect_wifi_connection,
 )
 from pccfg.services.winget import is_noop_install_success
+from pccfg.services.barcode_code39 import CODE39_PATTERNS, has_invalid_code39_chars, normalize_code39_value
 
 CLIENT_NAME_FIELD_ID = "client_name"
 COMPUTER_ROLE_FIELD_ID = "computer_role"
